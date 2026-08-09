@@ -56,6 +56,7 @@ owner --fund (send RON)--> rebate pool  <--claimRebate()-- user (reentrancy-safe
 | `setRebatePerGas()` / `setTreasury()` / `pause()` | owner | admin controls |
 | `emergencyWithdraw(to)` | owner | withdraw **only the surplus above all user obligations** — user funds can never be drained |
 | `gasSpentOf() / claimableOf() / stats()` | anyone | read-only analytics (feed your own leaderboard!) |
+| `claimRebate()` (web UI) | users | **leaderboard.html** now ships a wallet-connect + claim button (Ronin Wallet) — calls `claimRebate()` right from the page |
 
 **Why users would use it:** the rebate is proportional to the gas they spend —
 interact more, earn more RON back. That incentive loop is what keeps the

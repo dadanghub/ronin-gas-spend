@@ -57,6 +57,13 @@
   .myline{display:flex;gap:10px;align-items:center;flex-wrap:wrap;color:var(--mut);font-size:13px}
   .myline .kv{background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:8px 12px}
   .myline .kv b{color:var(--txt);font-size:15px}
+  .wvinfo{color:var(--mut);font-size:13px;font-family:ui-monospace,monospace}
+  .wvdot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#555;margin-right:7px;vertical-align:middle}
+  .wvdot.on{background:var(--green);box-shadow:0 0 7px var(--green)}
+  .ok{color:var(--green);font-size:13.5px;margin-top:12px;display:none;line-height:1.6;word-break:break-all}
+  .ok a{color:var(--accent)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .hint{color:var(--mut);font-size:12px;margin-top:10px;line-height:1.6}
 </style>
 </head>
 <body>
@@ -92,6 +99,19 @@
       <button id="lookupBtn" class="ghost">Look up</button>
     </div>
     <div class="myline" id="myline"></div>
+  </div>
+
+  <div class="card">
+    <h3>Claim rebates</h3>
+    <div class="row" style="margin-bottom:12px">
+      <button id="connectBtn">Connect wallet</button>
+      <button id="claimBtn" class="ghost" disabled>Claim my rebate</button>
+      <span class="wvinfo" id="walletInfo"><span class="wvdot"></span>Not connected</span>
+    </div>
+    <div class="myline" id="claimline"></div>
+    <div class="err" id="claimErr"></div>
+    <div class="ok" id="claimOk"></div>
+    <div class="hint">Rebates accrue from the contract's rebate pool (funded by the owner): <b>claimable = gas spent × rebate rate</b>. Connect with the Ronin Wallet that transacted with the contract, then click <b>Claim my rebate</b>. Claiming is a normal on-chain tx (costs a little gas).</div>
   </div>
 
   <div class="card">
@@ -879,6 +899,96 @@ $('loadBtn').onclick = async () => {
 $('rpcSel').onchange = async () => { if (cfg.addr) { await connect(); initContract(cfg.addr); await loadAll(); } };
 $('lookupBtn').onclick = lookup;
 $('demoBtn').onclick = showDemo;
+
+// ================= Wallet connect + claim rebate =================
+let signer = null, walletAddr = null;
+
+function roninProvider(){
+  try{
+    if (window.ronin && window.ronin.provider && window.ronin.provider.request) return window.ronin.provider;
+    if (window.ethereum && window.ethereum.request) return window.ethereum;
+  }catch(e){}
+  return null;
+}
+function claimErrMsg(m){ $('claimErr').innerHTML = m; $('claimErr').style.display = 'block'; $('claimOk').style.display = 'none'; }
+function showClaimOk(m){ $('claimOk').innerHTML = m; $('claimOk').style.display = 'block'; $('claimErr').style.display = 'none'; }
+function hideClaimMsg(){ $('claimErr').style.display = 'none'; $('claimOk').style.display = 'none'; }
+
+$('connectBtn').onclick = connectWallet;
+
+async function connectWallet(){
+  const prov = roninProvider();
+  if (!prov){
+    claimErrMsg("No wallet found. Install the <b>Ronin Wallet</b> extension (or enable it), then open this page via <b>http://localhost:8000</b> — wallets don't inject into file:// pages.");
+    return;
+  }
+  try{
+    const bp = new ethers.BrowserProvider(prov, 'any');
+    await bp.send('eth_requestAccounts', []);
+    signer = await bp.getSigner();
+    walletAddr = await signer.getAddress();
+    $('walletInfo').innerHTML = `<span class="wvdot on"></span>${short(walletAddr)}`;
+    $('walletInfo').title = walletAddr;
+    $('connectBtn').textContent = 'Switch wallet';
+    hideClaimMsg();
+    // autofill lookup + remember
+    myAddr = walletAddr; localStorage.setItem('gasspend.my', walletAddr); $('myaddr').value = walletAddr;
+    // make sure we have a contract
+    if (!contract && cfg.addr){ await connect(); initContract(cfg.addr); await loadAll(); }
+    await refreshClaimable();
+    if (contract) await lookup();
+    // chain sanity check
+    try{
+      const net = await bp.getNetwork(); const chain = Number(net.chainId);
+      const wantMain = $('rpcSel').value.includes('api.roninchain.com');
+      const want = wantMain ? 2020 : 2021;
+      if (chain !== want){
+        $('claimline').innerHTML += `<span class="kv">⚠ Wallet is on chain <b>${chain}</b> but this page reads chain <b>${want}</b> — switch networks in Ronin Wallet.</span>`;
+      }
+    }catch(e){}
+  }catch(e){
+    claimErrMsg('Connection failed: ' + (e.reason || e.shortMessage || e.message || e));
+  }
+}
+
+async function refreshClaimable(){
+  $('claimline').innerHTML = '<span class="kv">Checking claimable…</span>';
+  if (!contract){ $('claimline').innerHTML = '<span class="kv">Load a contract address above first to see your claimable rebate.</span>'; return; }
+  if (!walletAddr) return;
+  try{
+    const [claim, gas, reg] = await Promise.all([
+      contract.claimableOf(walletAddr), contract.gasSpentOf(walletAddr), contract.isRegistered(walletAddr)
+    ]);
+    const claimRon = Number(claim) / 1e18;
+    $('claimline').innerHTML = `
+      <span class="kv">Claimable: <b style="color:var(--gold)">${claimRon >= 0.001 ? claimRon.toFixed(4) : claimRon.toFixed(6)} RON</b></span>
+      <span class="kv">Gas spent: <b>${fmt(gas)}</b></span>
+      <span class="kv">Registered: <b>${reg ? '✅' : '❌'}</b></span>`;
+    $('claimBtn').disabled = claimRon < 0.000001;
+  }catch(e){ claimErrMsg('Could not read claimable: ' + e.message); }
+}
+
+$('claimBtn').onclick = async () => {
+  if (!signer) return claimErrMsg('Connect your wallet first.');
+  if (!contract) return claimErrMsg('Load the contract address first.');
+  hideClaimMsg();
+  $('claimBtn').disabled = true; $('claimBtn').textContent = 'Claiming…';
+  try{
+    const c = contract.connect(signer);
+    const tx = await c.claimRebate();
+    $('claimline').innerHTML = `<span class="kv">Tx sent: <b>${short(tx.hash)}</b> — waiting for confirmation…</span>`;
+    const rc = await tx.wait();
+    showClaimOk(`Rebate claimed ✅ &nbsp;Tx: <a href="https://explorer.roninchain.com/tx/${tx.hash}" target="_blank">${tx.hash}</a>`);
+    await refreshClaimable();
+    if (myAddr.toLowerCase() === walletAddr.toLowerCase()) await lookup();
+    await loadAll();
+  }catch(e){
+    claimErrMsg('Claim failed: ' + (e.reason || e.shortMessage || e.message || e));
+  }
+  $('claimBtn').textContent = 'Claim my rebate';
+  if (!contract) $('claimBtn').disabled = true;
+};
+
 
 function err(m){ $('err').textContent = m; $('err').style.display = 'block'; }
 function hideErr(){ $('err').style.display = 'none'; }
