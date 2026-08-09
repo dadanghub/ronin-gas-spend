@@ -135,6 +135,7 @@
       <span class="wvinfo" id="walletInfo"><span class="wvdot"></span>Not connected</span>
     </div>
     <div class="myline" id="claimline"></div>
+    <div class="hint" id="accInfo" style="display:none;background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:10px"></div>
     <div class="err" id="claimErr"></div>
     <div class="ok" id="claimOk"></div>
     <div class="hint">Rebates accrue from the contract's rebate pool (funded by the owner): <b>claimable = gas spent × rebate rate</b>. Connect with the Ronin Wallet that transacted with the contract, then click <b>Claim my rebate</b>. Claiming is a normal on-chain tx (costs a little gas).<br><b>Switching wallets:</b> click <b>Switch wallet</b> to re-open the account picker, or change the active account in the Ronin Wallet extension — this page updates automatically.</div>
@@ -977,9 +978,21 @@ async function connectWallet(){
   const prev = walletAddr;
   try{
     if (walletAddr){
-      // already connected: try to force the wallet to re-show the account picker
-      try { await bp.send('wallet_requestPermissions', [{ eth_accounts: {} }]); }
-      catch(e){ await bp.send('eth_requestAccounts', []); }
+      // Already connected. Most wallets won't re-show a picker for an authorized
+      // site, so try both standard prompts, then surface other connected accounts.
+      try { await bp.send('wallet_requestPermissions', [{ eth_accounts: {} }]); } catch(e){}
+      try { await bp.send('eth_requestAccounts', []); } catch(e){}
+      // If the wallet still reports the same account, tell the user what to do
+      try {
+        const accs = await prov.request({ method: 'eth_accounts' });
+        const others = (accs || []).filter(a => a && a.toLowerCase() !== walletAddr.toLowerCase());
+        $('accInfo').style.display = 'block';
+        if (others.length){
+          $('accInfo').innerHTML = `Other connected accounts: ${others.map(a => `<b title="${a}">${short(a)}</b>`).join(', ')}.<br>Select the one you want inside the <b>Ronin Wallet</b> — this page auto-updates.`;
+        } else {
+          $('accInfo').innerHTML = `The wallet returned the same account (authorized sites don't show a picker). Easiest fix: open <b>Ronin Wallet → Settings → Connected sites</b>, remove this site, then click <b>Connect wallet</b> again — the account picker will appear. Or just switch the active account inside the wallet — the page follows automatically.`;
+        }
+      } catch(e2){}
     } else {
       await bp.send('eth_requestAccounts', []);
     }
@@ -1005,9 +1018,6 @@ async function connectWallet(){
         $('claimline').innerHTML += `<span class="kv">⚠ Wallet is on chain <b>${chain}</b> but this page reads chain <b>${want}</b> — switch networks in Ronin Wallet.</span>`;
       }
     }catch(e){}
-    if (prev && prev.toLowerCase() === walletAddr.toLowerCase()){
-      $('claimline').innerHTML += `<span class="kv">ℹ Same account — to switch, pick another account in the wallet, or remove this site from <b>Ronin Wallet → Settings → Connected sites</b> and reconnect.</span>`;
-    }
   }catch(e){
     claimErrMsg('Connection failed: ' + (e.reason || e.shortMessage || e.message || e));
   }
@@ -1025,27 +1035,40 @@ function disconnectWallet(){
 $('disconnectBtn').onclick = disconnectWallet;
 
 // live-update when the active account/network changes inside the wallet
+async function applyAccount(accs){
+  const next = accs && accs[0];
+  if (!next){ disconnectWallet(); return; }
+  const prov = roninProvider();
+  try { if (prov) signer = await new ethers.BrowserProvider(prov, 'any').getSigner(); } catch(e){}
+  const changed = !walletAddr || next.toLowerCase() !== walletAddr.toLowerCase();
+  walletAddr = next;
+  $('walletInfo').innerHTML = `<span class="wvdot on"></span>${short(walletAddr)}`;
+  $('walletInfo').title = walletAddr;
+  $('connectBtn').textContent = 'Switch wallet';
+  $('disconnectBtn').style.display = 'inline-block';
+  myAddr = walletAddr; localStorage.setItem('gasspend.my', walletAddr); $('myaddr').value = walletAddr;
+  hideClaimMsg();
+  if (changed){ await refreshClaimable(); if (contract) await lookup(); }
+}
 function watchWallet(){
   const prov = roninProvider();
-  if (!prov || !prov.on) return;
-  try{
-    prov.on('accountsChanged', async (accs) => {
-      const next = accs && accs[0];
-      if (!next){ disconnectWallet(); return; }
-      if (walletAddr && next.toLowerCase() === walletAddr.toLowerCase()) return;
-      walletAddr = next;
-      try { const bp = new ethers.BrowserProvider(prov, 'any'); signer = await bp.getSigner(); } catch(e){}
-      $('walletInfo').innerHTML = `<span class="wvdot on"></span>${short(walletAddr)}`;
-      $('walletInfo').title = walletAddr;
-      $('connectBtn').textContent = 'Switch wallet';
-      $('disconnectBtn').style.display = 'inline-block';
-      myAddr = walletAddr; localStorage.setItem('gasspend.my', walletAddr); $('myaddr').value = walletAddr;
-      hideClaimMsg();
-      await refreshClaimable();
-      if (contract) await lookup();
-    });
-    prov.on('chainChanged', () => { if (contract) setTimeout(() => loadAll(), 500); });
-  }catch(e){}
+  if (prov && prov.on){
+    try{
+      prov.on('accountsChanged', applyAccount);
+      prov.on('chainChanged', () => { if (contract) setTimeout(() => loadAll(), 500); });
+    }catch(e){}
+  }
+  // Poll eth_accounts every 3s — catches wallets that don't emit events
+  setInterval(async () => {
+    const p = roninProvider();
+    if (!p || !p.request) return;
+    try{
+      const accs = await p.request({ method: 'eth_accounts' });
+      if (!accs || !accs.length){ if (walletAddr) disconnectWallet(); return; }
+      if (!walletAddr){ applyAccount(accs); return; }
+      if (accs[0].toLowerCase() !== walletAddr.toLowerCase()) applyAccount(accs);
+    }catch(e){}
+  }, 3000);
 }
 watchWallet();
 
@@ -1054,9 +1077,9 @@ async function refreshClaimable(){
   if (!contract){ $('claimline').innerHTML = '<span class="kv">Load a contract address above first to see your claimable rebate.</span>'; return; }
   if (!walletAddr) return;
   try{
-    const [claim, gas, reg] = await Promise.all([
-      contract.claimableOf(walletAddr), contract.gasSpentOf(walletAddr), contract.isRegistered(walletAddr)
-    ]);
+    const claim = await contract.claimableOf(walletAddr);
+    const gas = await contract.gasSpentOf(walletAddr);
+    const reg = await contract.isRegistered(walletAddr);
     const claimRon = Number(claim) / 1e18;
     $('claimline').innerHTML = `
       <span class="kv">Claimable: <b style="color:var(--gold)">${claimRon >= 0.001 ? claimRon.toFixed(4) : claimRon.toFixed(6)} RON</b></span>
@@ -1186,9 +1209,40 @@ async function loadStats(){
 
 const TOPIC0 = ethers.id('Activity(address,uint256,uint256,uint256,bytes32)');
 
+function paintBoard(rows, totalUsers, failed, note){
+  const gasPrice = lastGasPrice || 21e9;
+  const sorted = [...rows.entries()].sort((a,b) => Number(b[1].gas - a[1].gas));
+  const my = myAddr.toLowerCase();
+  const top = sorted.slice(0, 100);
+  if (!sorted.length){
+    $('boardTitle').textContent = 'Leaderboard';
+    $('tableWrap').innerHTML = `<div class="empty">No users registered yet.<br>Once users call <b>logActivity()</b> or <b>logActivityHeavy()</b>, they appear here ranked by gas burned.</div>`;
+    return;
+  }
+  const totalGas = sorted.reduce((s,r) => s + Number(r[1].gas), 0);
+  const tbody = top.map(([addr, d], i) => {
+    const ronV = Number(d.gas) * gasPrice / 1e18;
+    const pct = totalGas ? (Number(d.gas) / totalGas * 100).toFixed(1) : '0';
+    const isYou = addr.toLowerCase() === my;
+    const heavy = d.heavy === undefined ? '' : d.heavy === -1 ? `<span class="badge none">n/a</span>` : d.heavy > 0 ? `<span class="badge heavy">${fmt(d.heavy)} heavy records</span>` : '';
+    return `<tr>
+      <td class="rank${i < 3 ? ' top' : ''}">${i + 1}</td>
+      <td class="addr">${short(addr)}${isYou ? '<span class="you">YOU</span>' : ''}</td>
+      <td class="num">${fmt(d.gas)}</td>
+      <td class="num">${ronV.toFixed(4)}</td>
+      <td class="num">${d.calls || '—'}${heavy}</td>
+      <td class="num" style="color:${isYou ? 'var(--accent)' : 'var(--mut)'}">${pct}%</td>
+    </tr>`;
+  }).join('');
+  $('boardTitle').textContent = `Leaderboard — top ${Math.min(100, sorted.length)} of ${totalUsers} registered users${note ? ' · ' + note : ''}${failed ? ' · ' + failed + ' read(s) failed' : ''}`;
+  $('tableWrap').innerHTML = `<table>
+    <thead><tr><th>#</th><th>Wallet</th><th class="num">Gas spent</th><th class="num">≈ RON</th><th>Heavy</th><th class="num">Share</th></tr></thead>
+    <tbody>${tbody}</tbody></table>`;
+}
+
 async function loadBoard(){
   $('tableWrap').innerHTML = `<div class="empty"><span class="spin"></span> Reading on-chain user registry…</div>`;
-  let n = 0, failed = 0;
+  let n = 0;
   try { n = Number(await contract.userCount()); } catch(e){}
   if (!n){
     $('boardTitle').textContent = 'Leaderboard';
@@ -1196,59 +1250,26 @@ async function loadBoard(){
     return;
   }
   const rows = new Map();
-  const limit = Math.min(n, 500);   // read at most 500 users per refresh
+  const limit = Math.min(n, 300);          // cap reads per refresh
+  const note = limit < n ? 'showing first ' + limit : '';
+  let failed = 0;
+  const STEP = 20;                          // progressive paint every 20 users
   for (let i = 0; i < limit; i++){
     try {
       const addr = await contract.userList(i);
-      const u = await contract.users(addr);          // (registered, gasSpent, claimable, lastClaim)
+      const u = await contract.users(addr); // (registered, gasSpent, claimable, lastClaim)
       rows.set(addr.toLowerCase(), { addr, gas: u[1], claimable: u[2], calls: 0 });
     } catch(e){ failed++; }
+    if (i % STEP === STEP - 1 || i === limit - 1) paintBoard(rows, n, failed, note);
   }
-  renderBoard(rows, n, failed);
-}
-
-async function renderBoard(rows, totalUsers, failed){
-  let gasPrice = 21e9;
-  try { const p = await provider.getFeeData(); if (p && p.gasPrice) gasPrice = Number(p.gasPrice); } catch(e){}
+  paintBoard(rows, n, failed, note);
+  // enrich top 5 heavy badges after paint
   const sorted = [...rows.entries()].sort((a,b) => Number(b[1].gas - a[1].gas));
-  const my = myAddr.toLowerCase();
-  const top = sorted.slice(0, 100);
-
-  if (!sorted.length){
-    $('boardTitle').textContent = 'Leaderboard';
-    $('tableWrap').innerHTML = `<div class="empty">No users registered yet.<br>Once users call <b>logActivity()</b> or <b>logActivityHeavy()</b>, they appear here ranked by gas burned.</div>`;
-    return;
+  for (let i = 0; i < Math.min(5, sorted.length); i++){
+    const addr = sorted[i][0];
+    try { rows.get(addr).heavy = Number(await contract.heavyRecordCount(addr)); } catch(e){ rows.get(addr).heavy = -1; }
   }
-  const totalGas = sorted.reduce((s,r) => s + Number(r[1].gas), 0);
-  const paint = () => {
-    const tbody = top.map(([addr, d], i) => {
-      const ronV = Number(d.gas) * gasPrice / 1e18;
-      const pct = totalGas ? (Number(d.gas) / totalGas * 100).toFixed(1) : '0';
-      const isYou = addr.toLowerCase() === my;
-      const heavy = d.heavy === undefined ? '' : d.heavy === -1 ? `<span class="badge none">n/a</span>` : d.heavy > 0 ? `<span class="badge heavy">${fmt(d.heavy)} heavy records</span>` : '';
-      return `<tr>
-        <td class="rank${i < 3 ? ' top' : ''}">${i + 1}</td>
-        <td class="addr">${short(addr)}${isYou ? '<span class="you">YOU</span>' : ''}</td>
-        <td class="num">${fmt(d.gas)}</td>
-        <td class="num">${ronV.toFixed(4)}</td>
-        <td class="num">${d.calls || '—'}${heavy}</td>
-        <td class="num" style="color:${isYou ? 'var(--accent)' : 'var(--mut)'}">${pct}%</td>
-      </tr>`;
-    }).join('');
-    $('boardTitle').textContent = `Leaderboard — top ${Math.min(100, sorted.length)} of ${totalUsers} registered users${failed ? ` · ${failed} read(s) failed (RPC busy)` : ''}`;
-    $('tableWrap').innerHTML = `<table>
-      <thead><tr><th>#</th><th>Wallet</th><th class="num">Gas spent</th><th class="num">≈ RON</th><th>Heavy</th><th class="num">Share</th></tr></thead>
-      <tbody>${tbody}</tbody></table>`;
-  };
-  paint();  // show immediately
-  // enrich top 10 heavy-record badges after paint (throttled reads)
-  (async () => {
-    for (let i = 0; i < Math.min(5, top.length); i++){
-      const addr = top[i][0];
-      try { top[i][1].heavy = Number(await contract.heavyRecordCount(addr)); } catch(e){ top[i][1].heavy = -1; }
-    }
-    paint();
-  })();
+  paintBoard(rows, n, failed, note);
 }
 
 async function lookup(){
@@ -1258,10 +1279,11 @@ async function lookup(){
   hideErr();
   myAddr = a; localStorage.setItem('gasspend.my', a);
   try{
-  const [gas, claim, reg, heavy] = await Promise.all([
-    contract.gasSpentOf(a), contract.claimableOf(a), contract.isRegistered(a), contract.heavyRecordCount(a)
-  ]);
-  const price = (await provider.getFeeData()).gasPrice ? Number((await provider.getFeeData()).gasPrice) : 21e9;
+  const gas = await contract.gasSpentOf(a);
+  const claim = await contract.claimableOf(a);
+  const reg = await contract.isRegistered(a);
+  const heavy = await contract.heavyRecordCount(a);
+  const price = lastGasPrice || 21e9;
   const ronV = Number(gas) * price / 1e18;
   $('myline').innerHTML = `
     <span class="kv">Registered: <b>${reg ? '✅' : '❌'}</b></span>

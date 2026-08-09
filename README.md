@@ -125,6 +125,7 @@ permanently stuck (contract balance returns to 0 after payouts).
 - `rebatePerGas` = 10 gwei/gas · rebate pool seeded with 3 RON
 - The frontend (`leaderboard.html`) **loads this address automatically** — no manual entry needed.
 - Frontend RPC layer: requests are serialized (~300ms) with auto-retry — the Ronin public RPC rejects parallel batches (ethers auto-batching) with `Too many requests`; the page also reads the leaderboard from the contract's on-chain `userList`/`users()` registry (full season, no block-range scanning) instead of event logs.
+- RPC layer v2: the page now intercepts ethers' internal `_send` so **no JSON-RPC batch ever leaves the browser** (Ronin rejects batches), every request has a 20s timeout, auto-retries on rate-limit, and **fails over to `ronin.drpc.org`** if the official RPC is down. Wallet switching: tries both wallet prompts, lists other connected accounts, polls `eth_accounts` every 3s so switching inside the wallet auto-updates the page.
 
 ### Redeploy (if you want a fresh instance)
 
