@@ -1,0 +1,1032 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GasSpend Leaderboard — Ronin PoD</title>
+<script src="https://cdn.jsdelivr.net/npm/ethers@6.13.4/dist/ethers.umd.min.js"></script>
+<style>
+  :root{
+    --bg:#0E1116; --card:#1D222B; --card2:#141920; --line:#2A313D;
+    --txt:#E8ECF2; --mut:#8A94A6; --accent:#FF5C38; --gold:#FFD97A; --green:#7FD8A4;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--txt);font-family:'Inter','Segoe UI',system-ui,sans-serif;min-height:100vh}
+  .topbar{height:6px;background:linear-gradient(90deg,#FF5C38,#E1222C)}
+  .wrap{max-width:1100px;margin:0 auto;padding:28px 20px 80px}
+  h1{font-size:26px;font-weight:800;letter-spacing:-.5px}
+  h1 span{color:var(--accent)}
+  .sub{color:var(--mut);font-size:14px;margin-top:6px;line-height:1.5}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 20px;margin-top:18px}
+  .card h3{font-size:13px;text-transform:uppercase;letter-spacing:.14em;color:var(--mut);margin-bottom:14px;font-weight:700}
+  .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+  input,select,button{font-family:inherit;font-size:14px;border-radius:10px;border:1px solid var(--line);background:var(--card2);color:var(--txt);padding:10px 12px;outline:none}
+  input:focus,select:focus{border-color:var(--accent)}
+  button{background:var(--accent);border:none;color:#fff;font-weight:700;cursor:pointer;transition:opacity .15s}
+  button:hover{opacity:.85}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--mut)}
+  button.ghost:hover{border-color:var(--mut);color:var(--txt)}
+  #addrIn{flex:1;min-width:260px;font-family:ui-monospace,monospace;font-size:13px}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+  .stat{background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .stat .v{font-size:22px;font-weight:800;font-variant-numeric:tabular-nums}
+  .stat .l{font-size:12px;color:var(--mut);margin-top:4px;text-transform:uppercase;letter-spacing:.08em}
+  .stat .v.ron{color:var(--gold)} .stat .v.gas{color:var(--green)} .stat .v.usr{color:var(--accent)}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th{text-align:left;color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.1em;padding:8px 10px;border-bottom:1px solid var(--line)}
+  td{padding:10px;border-bottom:1px solid #1b212b;font-variant-numeric:tabular-nums}
+  tr:hover td{background:#161c25}
+  .rank{width:44px;font-weight:800;color:var(--mut)}
+  .rank.top{color:var(--gold)}
+  .addr{font-family:ui-monospace,monospace;font-size:12.5px;color:#c9d2de}
+  .you{display:inline-block;background:var(--accent);color:#fff;font-size:10px;font-weight:800;border-radius:6px;padding:2px 6px;margin-left:8px;vertical-align:middle}
+  .num{text-align:right}
+  .ctx{color:var(--mut);font-size:11px;font-family:ui-monospace,monospace;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .badge{display:inline-block;font-size:10.5px;font-weight:700;border-radius:6px;padding:2px 7px;margin-left:6px}
+  .badge.heavy{background:#1B9E4B22;color:var(--green);border:1px solid #1B9E4B55}
+  .badge.none{background:#333a;color:var(--mut)}
+  .empty{color:var(--mut);text-align:center;padding:36px 10px;font-size:14px;line-height:1.7}
+  .err{color:#ff8a8a;font-size:13px;margin-top:10px;display:none}
+  .spin{display:inline-block;width:14px;height:14px;border:2px solid #ffffff44;border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px;margin-right:8px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .foot{color:var(--mut);font-size:12px;margin-top:26px;line-height:1.7;text-align:center}
+  .foot a{color:var(--accent)}
+  .demo{display:none;background:#3a2f08;border:1px solid #8a6d1a;color:var(--gold);font-size:12.5px;border-radius:10px;padding:10px 14px;margin-top:12px}
+  .demo b{font-weight:800}
+  #myaddr{width:100%;font-family:ui-monospace,monospace;font-size:13px}
+  .myline{display:flex;gap:10px;align-items:center;flex-wrap:wrap;color:var(--mut);font-size:13px}
+  .myline .kv{background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:8px 12px}
+  .myline .kv b{color:var(--txt);font-size:15px}
+</style>
+</head>
+<body>
+<div class="topbar"></div>
+<div class="wrap">
+  <h1>GasSpend <span>Leaderboard</span> — Ronin PoD Season 3</h1>
+  <div class="sub">Live on-chain leaderboard for the GasSpend contract. Reads real <code>Activity</code> events and contract state directly from Ronin RPC (no backend). Gas spend shown in gas units and estimated RON at the current gas price — this is the metric PoD scores under <b>Gas Spend</b>.</div>
+
+  <div class="card">
+    <h3>Contract</h3>
+    <div class="row">
+      <input id="addrIn" placeholder="0x… deployed GasSpend contract address">
+      <button id="loadBtn">Load</button>
+      <button id="demoBtn" class="ghost">Show demo data</button>
+      <select id="rpcSel">
+        <option value="https://api.roninchain.com/rpc">Ronin mainnet</option>
+        <option value="https://saigon-testnet.roninchain.com/rpc">Saigon testnet</option>
+      </select>
+    </div>
+    <div class="demo" id="demoNote"><b>DEMO MODE</b> — the rows below are fake sample data so you can preview the UI. Enter a deployed contract address and click <b>Load</b> for real on-chain data.</div>
+    <div class="err" id="err"></div>
+  </div>
+
+  <div class="card">
+    <h3>Network stats</h3>
+    <div class="stats" id="stats"></div>
+  </div>
+
+  <div class="card">
+    <h3>Look up any address</h3>
+    <div class="row" style="margin-bottom:12px">
+      <input id="myaddr" placeholder="0x… wallet address (yours or anyone's)">
+      <button id="lookupBtn" class="ghost">Look up</button>
+    </div>
+    <div class="myline" id="myline"></div>
+  </div>
+
+  <div class="card">
+    <h3 id="boardTitle">Leaderboard</h3>
+    <div id="tableWrap"><div class="empty">Enter the deployed contract address above and click <b>Load</b>.</div></div>
+  </div>
+
+  <div class="foot">
+    Built for <a href="https://pod.roninchain.com/leaderboard?season=3" target="_blank">Ronin Proof of Distribution — Season 3</a> ·
+    Docs: <a href="https://docs.roninchain.com/proof-of-distribution/" target="_blank">docs.roninchain.com/proof-of-distribution</a> ·
+    PoD scores <b>real</b> gas fees from on-chain data; this page just visualizes what the contract records.
+  </div>
+</div>
+
+<script>
+const ABI = [
+ {
+  "inputs": [
+   {
+    "internalType": "address",
+    "name": "_treasury",
+    "type": "address"
+   },
+   {
+    "internalType": "uint256",
+    "name": "_rebatePerGas",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "nonpayable",
+  "type": "constructor"
+ },
+ {
+  "inputs": [],
+  "name": "AlreadyRegistered",
+  "type": "error"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "owed",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "balance",
+    "type": "uint256"
+   }
+  ],
+  "name": "InvalidPool",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "NotRegistered",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "NothingToClaim",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "Paused",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "Unauthorized",
+  "type": "error"
+ },
+ {
+  "inputs": [],
+  "name": "ZeroAddress",
+  "type": "error"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "user",
+    "type": "address"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "gasUsed",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "cumulativeGas",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "timestamp",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "bytes32",
+    "name": "context",
+    "type": "bytes32"
+   }
+  ],
+  "name": "Activity",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": false,
+    "internalType": "address",
+    "name": "to",
+    "type": "address"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "amount",
+    "type": "uint256"
+   }
+  ],
+  "name": "EmergencyWithdraw",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": false,
+    "internalType": "bool",
+    "name": "state",
+    "type": "bool"
+   }
+  ],
+  "name": "PauseToggled",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "user",
+    "type": "address"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "amount",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "timestamp",
+    "type": "uint256"
+   }
+  ],
+  "name": "RebateClaimed",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "value",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "address",
+    "name": "setter",
+    "type": "address"
+   }
+  ],
+  "name": "RebatePerGasSet",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "user",
+    "type": "address"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "amount",
+    "type": "uint256"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "timestamp",
+    "type": "uint256"
+   }
+  ],
+  "name": "RebatesRecovered",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": true,
+    "internalType": "address",
+    "name": "user",
+    "type": "address"
+   },
+   {
+    "indexed": false,
+    "internalType": "uint256",
+    "name": "timestamp",
+    "type": "uint256"
+   }
+  ],
+  "name": "Registered",
+  "type": "event"
+ },
+ {
+  "anonymous": false,
+  "inputs": [
+   {
+    "indexed": false,
+    "internalType": "address",
+    "name": "treasury",
+    "type": "address"
+   },
+   {
+    "indexed": false,
+    "internalType": "address",
+    "name": "setter",
+    "type": "address"
+   }
+  ],
+  "name": "TreasurySet",
+  "type": "event"
+ },
+ {
+  "inputs": [],
+  "name": "BASE_GAS",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "claimRebate",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "address",
+    "name": "user",
+    "type": "address"
+   }
+  ],
+  "name": "claimableOf",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "address",
+    "name": "to",
+    "type": "address"
+   }
+  ],
+  "name": "emergencyWithdraw",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "address",
+    "name": "user",
+    "type": "address"
+   }
+  ],
+  "name": "gasSpentOf",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "address",
+    "name": "user",
+    "type": "address"
+   }
+  ],
+  "name": "heavyRecordCount",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "address",
+    "name": "",
+    "type": "address"
+   },
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "name": "heavyRecords",
+  "outputs": [
+   {
+    "internalType": "bytes32",
+    "name": "",
+    "type": "bytes32"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "address",
+    "name": "user",
+    "type": "address"
+   }
+  ],
+  "name": "isRegistered",
+  "outputs": [
+   {
+    "internalType": "bool",
+    "name": "",
+    "type": "bool"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
+    "name": "context",
+    "type": "bytes32"
+   }
+  ],
+  "name": "logActivity",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "bytes32",
+    "name": "context",
+    "type": "bytes32"
+   },
+   {
+    "internalType": "uint256",
+    "name": "slots",
+    "type": "uint256"
+   }
+  ],
+  "name": "logActivityHeavy",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "maxHeavySlots",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "owner",
+  "outputs": [
+   {
+    "internalType": "address",
+    "name": "",
+    "type": "address"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "pause",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "paused",
+  "outputs": [
+   {
+    "internalType": "bool",
+    "name": "",
+    "type": "bool"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "poolBalance",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "rebatePerGas",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "recoverAllUnclaimed",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "address",
+    "name": "user",
+    "type": "address"
+   }
+  ],
+  "name": "recoverUnclaimed",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "register",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "_max",
+    "type": "uint256"
+   }
+  ],
+  "name": "setMaxHeavySlots",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "_rebatePerGas",
+    "type": "uint256"
+   }
+  ],
+  "name": "setRebatePerGas",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "address",
+    "name": "_treasury",
+    "type": "address"
+   }
+  ],
+  "name": "setTreasury",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "stats",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "users_",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "calls_",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "gasSpent_",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "owed_",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "totalCalls",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "totalGasSpent",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "totalOwed",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "totalRebatesClaimed",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "totalRecovered",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "totalUsers",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "treasury",
+  "outputs": [
+   {
+    "internalType": "address",
+    "name": "",
+    "type": "address"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "unpause",
+  "outputs": [],
+  "stateMutability": "nonpayable",
+  "type": "function"
+ },
+ {
+  "inputs": [],
+  "name": "userCount",
+  "outputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "uint256",
+    "name": "",
+    "type": "uint256"
+   }
+  ],
+  "name": "userList",
+  "outputs": [
+   {
+    "internalType": "address",
+    "name": "",
+    "type": "address"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "inputs": [
+   {
+    "internalType": "address",
+    "name": "",
+    "type": "address"
+   }
+  ],
+  "name": "users",
+  "outputs": [
+   {
+    "internalType": "bool",
+    "name": "registered",
+    "type": "bool"
+   },
+   {
+    "internalType": "uint256",
+    "name": "gasSpent",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "claimable",
+    "type": "uint256"
+   },
+   {
+    "internalType": "uint256",
+    "name": "lastClaim",
+    "type": "uint256"
+   }
+  ],
+  "stateMutability": "view",
+  "type": "function"
+ },
+ {
+  "stateMutability": "payable",
+  "type": "receive"
+ }
+];
+const DEFAULT_RPC = 'https://api.roninchain.com/rpc';
+const STORAGE_KEY = 'gasspend.cfg';
+let provider = null, contract = null, myAddr = localStorage.getItem('gasspend.my') || '';
+let cfg = loadCfg();
+
+function loadCfg(){ try{ return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {} }catch(e){ return {} } }
+function saveCfg(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg)) }
+
+const $ = id => document.getElementById(id);
+$('rpcSel').value = cfg.rpc || DEFAULT_RPC;
+if (cfg.addr) { $('addrIn').value = cfg.addr; connect().then(loadAll); }
+$('myaddr').value = myAddr;
+
+async function connect(){
+  const rpc = $('rpcSel').value; cfg.rpc = rpc; saveCfg();
+  provider = new ethers.JsonRpcProvider(rpc);
+  return provider;
+}
+function initContract(addr){
+  contract = new ethers.Contract(addr, ABI, provider);
+  cfg.addr = addr; saveCfg();
+}
+async function ron(wei){ return Number(ethers.formatEther(wei)); }
+
+$('loadBtn').onclick = async () => {
+  const a = $('addrIn').value.trim();
+  if (!ethers.isAddress(a)) return err('That is not a valid address.');
+  hideErr();
+  await connect(); initContract(a);
+  await loadAll();
+};
+$('rpcSel').onchange = async () => { if (cfg.addr) { await connect(); initContract(cfg.addr); await loadAll(); } };
+$('lookupBtn').onclick = lookup;
+$('demoBtn').onclick = showDemo;
+
+function err(m){ $('err').textContent = m; $('err').style.display = 'block'; }
+function hideErr(){ $('err').style.display = 'none'; }
+
+async function loadAll(){
+  try{
+    await Promise.all([loadStats(), loadBoard()]);
+  }catch(e){ err('Load failed: ' + e.message); console.error(e); }
+}
+
+async function loadStats(){
+  const s = $('stats');
+  s.innerHTML = `<div class="stat"><div class="v"><span class="spin"></span></div><div class="l">loading</div></div>`;
+  const [stats, pool, rate, price, owner, treasury] = await Promise.all([
+    contract.stats(), contract.poolBalance(), contract.rebatePerGas(),
+    provider.getFeeData(), contract.owner(), contract.treasury()
+  ]);
+  const gasPrice = price.gasPrice ? Number(price.gasPrice) : 21e9;
+  const ronVal = Number(stats[2]) * gasPrice / 1e18;
+  const rateRon = Number(rate) / 1e18;
+  const pct = stats[2] > 0n ? (Number(stats[3]) / (Number(stats[2]) * gasPrice / 1e18 + Number(stats[3])) * 100).toFixed(1) : 0;
+  s.innerHTML = `
+    <div class="stat"><div class="v usr">${fmt(stats[0])}</div><div class="l">Users</div></div>
+    <div class="stat"><div class="v usr">${fmt(stats[1])}</div><div class="l">Total calls</div></div>
+    <div class="stat"><div class="v gas">${fmt(stats[2])}</div><div class="l">Gas spent (units)</div></div>
+    <div class="stat"><div class="v ron">${ronVal.toFixed(2)} RON</div><div class="l">Est. gas @ ${(gasPrice/1e9).toFixed(0)} gwei</div></div>
+    <div class="stat"><div class="v ron">${ron(pool).toFixed(3)}</div><div class="l">Rebate pool (RON)</div></div>
+    <div class="stat"><div class="v ron">${ron(stats[3]).toFixed(4)}</div><div class="l">Owed to users (RON)</div></div>
+    <div class="stat"><div class="v">${rateRon.toFixed(9)}</div><div class="l">Rebate rate (RON/gas)</div></div>`;
+}
+
+const TOPIC0 = ethers.id('Activity(address,uint256,uint256,uint256,bytes32)');
+
+async function loadBoard(){
+  $('tableWrap').innerHTML = `<div class="empty"><span class="spin"></span> Scanning Activity events…</div>`;
+  const latest = await provider.getBlockNumber();
+  // Ronin public RPC caps eth_getLogs at 200 blocks/request — stay under it.
+  const depth = Math.min(8000, latest);            // scan last ~8k blocks
+  const chunk = 150;
+  const rows = new Map();
+  let scanned = 0;
+  for (let to = latest; to > latest - depth && scanned < 60; scanned++) {
+    const from = Math.max(0, to - chunk + 1);
+    const logs = await provider.getLogs({ address: cfg.addr, topics: [TOPIC0], fromBlock: from, toBlock: to });
+    for (const lg of logs){
+      const parsed = contract.interface.parseLog(lg); if (!parsed) continue;
+      const u = parsed.args.user, gas = parsed.args.gasUsed, ts = parsed.args.timestamp, ctx = parsed.args.context;
+      const r = rows.get(u) || { gas: 0n, calls: 0, lastTs: 0, ctx: '' };
+      r.gas += gas; r.calls++; if (Number(ts) > r.lastTs) { r.lastTs = Number(ts); r.ctx = ethers.isHexString(ctx) ? ctx.slice(0,10) : ctx; }
+      rows.set(u, r);
+    }
+    to = from - 1;
+    if (from <= 0) break;
+  }
+  renderBoard(rows, latest);
+}
+
+async function renderBoard(rows, latestBlock){
+  const gasPrice = (await provider.getFeeData()).gasPrice ? Number((await provider.getFeeData()).gasPrice) : 21e9;
+  const sorted = [...rows.entries()].sort((a,b) => Number(b[1].gas - a[1].gas));
+  const my = myAddr.toLowerCase();
+  const top = sorted.slice(0, 100);
+
+  // enrich top 20 with heavyRecordCount + claimable (sequential eth_calls)
+  for (let i = 0; i < Math.min(20, top.length); i++){
+    const a = top[i][0];
+    try{
+      const [hc, cl] = await Promise.all([contract.heavyRecordCount(a), contract.claimableOf(a)]);
+      top[i][1].heavy = Number(hc); top[i][1].claimable = Number(cl) / 1e18;
+    }catch(e){ top[i][1].heavy = -1; }
+  }
+  const blocksBack = latestBlock - (await provider.getBlockNumber());
+
+  if (!sorted.length){
+    $('tableWrap').innerHTML = `<div class="empty">No Activity events found yet.<br>Once users call <b>logActivity()</b> or <b>logActivityHeavy()</b>, they appear here ranked by gas burned.</div>`;
+    return;
+  }
+  const totalGas = sorted.reduce((s,r) => s + Number(r[1].gas), 0);
+  const tbody = sorted.slice(0, 100).map(([addr, d], i) => {
+    const ronV = Number(d.gas) * gasPrice / 1e18;
+    const pct = totalGas ? (Number(d.gas) / totalGas * 100).toFixed(1) : '0';
+    const isYou = addr.toLowerCase() === my;
+    const heavy = d.heavy === -1 ? `<span class="badge none">n/a</span>` : d.heavy > 0 ? `<span class="badge heavy">${fmt(d.heavy)} heavy records</span>` : '';
+    return `<tr>
+      <td class="rank${i < 3 ? ' top' : ''}">${i + 1}</td>
+      <td class="addr">${short(addr)}${isYou ? '<span class="you">YOU</span>' : ''}</td>
+      <td class="num">${fmt(d.gas)}</td>
+      <td class="num">${ronV.toFixed(4)}</td>
+      <td class="num">${d.calls}${heavy}</td>
+      <td class="ctx" title="${d.ctx}">${d.ctx || '—'}</td>
+      <td class="num" style="color:${isYou ? 'var(--accent)' : 'var(--mut)'}">${pct}%</td>
+    </tr>`;
+  }).join('');
+  $('boardTitle').textContent = `Leaderboard — top ${Math.min(100, sorted.length)} of ${sorted.length} wallets · last ${fmt(blocksBack)} blocks`;
+  $('tableWrap').innerHTML = `<table>
+    <thead><tr><th>#</th><th>Wallet</th><th class="num">Gas spent</th><th class="num">≈ RON</th><th class="num">Calls</th><th>Last ctx</th><th class="num">Share</th></tr></thead>
+    <tbody>${tbody}</tbody></table>`;
+}
+
+async function lookup(){
+  const a = $('myaddr').value.trim();
+  if (!ethers.isAddress(a)) return err('Enter a valid wallet address.');
+  if (!contract) return err('Load a contract first.');
+  hideErr();
+  myAddr = a; localStorage.setItem('gasspend.my', a);
+  const [gas, claim, reg, heavy] = await Promise.all([
+    contract.gasSpentOf(a), contract.claimableOf(a), contract.isRegistered(a), contract.heavyRecordCount(a)
+  ]);
+  const price = (await provider.getFeeData()).gasPrice ? Number((await provider.getFeeData()).gasPrice) : 21e9;
+  const ronV = Number(gas) * price / 1e18;
+  $('myline').innerHTML = `
+    <span class="kv">Registered: <b>${reg ? '✅' : '❌'}</b></span>
+    <span class="kv">Gas spent: <b>${fmt(gas)}</b></span>
+    <span class="kv">≈ ${ronV.toFixed(4)} RON</span>
+    <span class="kv">Claimable: <b style="color:var(--gold)">${Number(claim)/1e18 >= 0.001 ? (Number(claim)/1e18).toFixed(4) : '<0.001'} RON</b></span>
+    <span class="kv">Heavy records: <b>${fmt(heavy)}</b></span>`;
+  if (reg) { await loadBoard(); window.scrollTo({top: document.body.scrollHeight * .5, behavior:'smooth'}); }
+}
+
+function showDemo(){
+  $('demoNote').style.display = 'block';
+  const demo = [
+    ['0x3bF2a0B8C9d1e4F5a6b7C8d9E0F1a2B3c4D5e6F7', 4520000000n, 87], ['0x9a8B7c6D5e4F3a2B1c0D9e8F7a6B5c4D3e2F1a0', 3110000000n, 54],
+    ['0x1a2b3C4d5E6f7A8b9C0d1E2f3A4b5C6d7E8f9A0', 1890000000n, 32], ['0xF0e1D2c3B4a5A6b7C8d9E0f1A2b3C4d5E6f7a8', 950000000n, 21],
+    ['0x8A9b0C1d2E3f4A5b6C7d8E9f0A1b2C3d4E5f6A7', 610000000n, 14], ['0x2B3c4D5e6F7a8B9c0D1e2F3a4B5c6D7e8F9a0b', 420000000n, 9],
+    ['0x6C7d8E9f0A1b2C3d4E5f6A7b8C9d0E1f2A3b4C5', 330000000n, 7],  ['0x4D5e6F7a8B9c0D1e2F3a4B5c6D7e8F9a0b1C2d', 210000000n, 5]
+  ];
+  const gasPrice = 21e9;
+  const tbody = demo.map(([a, g, c], i) => {
+    const ronV = Number(g) * gasPrice / 1e18;
+    const isYou = a.toLowerCase() === myAddr.toLowerCase();
+    return `<tr><td class="rank${i<3?' top':''}">${i+1}</td><td class="addr">${short(a)}${isYou?'<span class="you">YOU</span>':''}</td>
+      <td class="num">${fmt(g)}</td><td class="num">${ronV.toFixed(4)}</td><td class="num">${c} <span class="badge heavy">heavy records</span></td>
+      <td class="ctx">0x7a1f9c…</td><td class="num" style="color:var(--mut)">${(100*Number(g)/(demo.reduce((s,x)=>s+Number(x[1]),0))).toFixed(1)}%</td></tr>`;
+  }).join('');
+  $('boardTitle').textContent = 'Leaderboard — demo data (not on-chain)';
+  $('tableWrap').innerHTML = `<table><thead><tr><th>#</th><th>Wallet</th><th class="num">Gas spent</th><th class="num">≈ RON</th><th class="num">Calls</th><th>Last ctx</th><th class="num">Share</th></tr></thead><tbody>${tbody}</tbody></table>`;
+}
+
+function short(a){ return a.slice(0,6) + '…' + a.slice(-4); }
+function fmt(x){
+  x = BigInt(x);
+  const units = ['','K','M','B','T'];
+  let v = Number(x), u = 0;
+  while (v >= 1000 && u < units.length - 1){ v /= 1000; u++; }
+  return (v >= 100 ? v.toFixed(0) : v.toFixed(v >= 10 ? 1 : 2)) + units[u];
+}
+setInterval(() => { if (contract && !document.hidden) loadAll(); }, 30000);
+</script>
+</body>
+</html>

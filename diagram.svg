@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="780" viewBox="0 0 1280 780" font-family="'Inter','Segoe UI',system-ui,sans-serif">
+  <defs>
+    <linearGradient id="ronin" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FF5C38"/><stop offset="1" stop-color="#E1222C"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1D222B"/><stop offset="1" stop-color="#151A21"/>
+    </linearGradient>
+    <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#7C8698"/>
+    </marker>
+    <marker id="arrA" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#FF5C38"/>
+    </marker>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="780" fill="#0E1116"/>
+  <rect x="0" y="0" width="1280" height="8" fill="url(#ronin)"/>
+
+  <text x="640" y="52" text-anchor="middle" fill="#FFFFFF" font-size="30" font-weight="700">GasSpend — earning PoD “Gas Spend” score on Ronin</text>
+  <text x="640" y="80" text-anchor="middle" fill="#8A94A6" font-size="16">Every user transaction spends gas → gas fees go to the Ronin treasury → that volume is the PoD metric</text>
+
+  <!-- ============ USERS ============ -->
+  <g>
+    <rect x="60" y="140" width="300" height="330" rx="18" fill="url(#card)" stroke="#2A313D"/>
+    <circle cx="100" cy="176" r="16" fill="url(#ronin)"/>
+    <text x="100" y="182" text-anchor="middle" fill="#fff" font-size="16" font-weight="700">U</text>
+    <text x="124" y="182" fill="#FFFFFF" font-size="17" font-weight="600">Users</text>
+    <text x="82" y="214" fill="#8A94A6" font-size="13">Alice, Bob, + more…</text>
+
+    <rect x="84" y="238" width="252" height="58" rx="10" fill="#141920" stroke="#2E3644"/>
+    <text x="98" y="262" fill="#FFD97A" font-size="14" font-weight="600">register()</text>
+    <text x="98" y="283" fill="#9AA4B5" font-size="12">one-time, ~46k gas</text>
+
+    <rect x="84" y="306" width="252" height="58" rx="10" fill="#141920" stroke="#2E3644"/>
+    <text x="98" y="330" fill="#FFD97A" font-size="14" font-weight="600">logActivity(ctx)</text>
+    <text x="98" y="351" fill="#9AA4B5" font-size="12">daily use · ~19k gas each call</text>
+
+    <rect x="84" y="374" width="252" height="58" rx="10" fill="#141920" stroke="#2E3644"/>
+    <text x="98" y="398" fill="#FFD97A" font-size="14" font-weight="600">claimRebate()</text>
+    <text x="98" y="419" fill="#9AA4B5" font-size="12">gets RON back for gas burned</text>
+
+  </g>
+
+  <!-- users -> contract arrow -->
+  <line x1="360" y1="305" x2="470" y2="305" stroke="#FF5C38" stroke-width="3" marker-end="url(#arrA)"/>
+  <text x="415" y="290" text-anchor="middle" fill="#FF9D7A" font-size="12">txs pay gas</text>
+  <text x="415" y="270" text-anchor="middle" fill="#FF9D7A" font-size="12">in RON</text>
+
+  <!-- ============ CONTRACT ============ -->
+  <g>
+    <rect x="480" y="140" width="320" height="470" rx="18" fill="url(#card)" stroke="url(#ronin)" stroke-width="2" filter="url(#glow)"/>
+    <rect x="480" y="140" width="320" height="52" rx="18" fill="url(#ronin)"/>
+    <text x="640" y="174" text-anchor="middle" fill="#fff" font-size="17" font-weight="700">GasSpend contract</text>
+
+    <text x="502" y="222" fill="#8A94A6" font-size="13">RECORDS (on-chain ledger)</text>
+    <rect x="502" y="234" width="276" height="86" rx="10" fill="#141920" stroke="#2E3644"/>
+    <text x="516" y="258" fill="#E8ECF2" font-size="13">· gasSpent[user] cumulative gas</text>
+    <text x="516" y="280" fill="#E8ECF2" font-size="13">· claimable[user] RON owed</text>
+    <text x="516" y="302" fill="#E8ECF2" font-size="13">· totalGasSpent · totalCalls</text>
+
+    <text x="502" y="352" fill="#8A94A6" font-size="13">EMITS (analytics)</text>
+    <rect x="502" y="364" width="276" height="60" rx="10" fill="#141920" stroke="#2E3644"/>
+    <text x="516" y="388" fill="#7FD8A4" font-size="13" font-family="monospace">Activity(user, gasUsed, …)</text>
+    <text x="516" y="410" fill="#7FD8A4" font-size="13" font-family="monospace">RebateClaimed(user, amount)</text>
+
+    <text x="502" y="456" fill="#8A94A6" font-size="13">REBATE POOL (RON)</text>
+    <rect x="502" y="468" width="276" height="58" rx="10" fill="#141920" stroke="#2E3644"/>
+    <text x="516" y="492" fill="#E8ECF2" font-size="13">funded by owner · capped by obligations</text>
+    <text x="516" y="514" fill="#E8ECF2" font-size="13">reentrancy-safe claims</text>
+
+    <text x="640" y="596" text-anchor="middle" fill="#8A94A6" font-size="12">rewards users ∝ gas they spend → users keep coming back</text>
+  </g>
+
+  <!-- contract -> ronin arrow -->
+  <line x1="800" y1="375" x2="910" y2="375" stroke="#7C8698" stroke-width="3" marker-end="url(#arr)"/>
+  <text x="855" y="358" text-anchor="middle" fill="#8A94A6" font-size="12">gas fees</text>
+  <text x="855" y="400" text-anchor="middle" fill="#8A94A6" font-size="12">(RON)</text>
+
+  <!-- ============ RONIN / POD ============ -->
+  <g>
+    <rect x="920" y="140" width="300" height="470" rx="18" fill="url(#card)" stroke="#2A313D"/>
+    <rect x="920" y="140" width="300" height="52" rx="18" fill="#1B9E4B" opacity="0.9"/>
+    <text x="1070" y="174" text-anchor="middle" fill="#fff" font-size="17" font-weight="700">Ronin · PoD Season 3</text>
+
+    <rect x="942" y="214" width="256" height="70" rx="10" fill="#141920" stroke="#2E3644"/>
+    <text x="956" y="240" fill="#E8ECF2" font-size="14" font-weight="600">Ronin Treasury</text>
+    <text x="956" y="262" fill="#9AA4B5" font-size="12">receives the gas fees →</text>
+
+    <line x1="1070" y1="292" x2="1070" y2="318" stroke="#7C8698" stroke-width="2" marker-end="url(#arr)"/>
+
+    <rect x="942" y="322" width="256" height="70" rx="10" fill="#141920" stroke="#2E3644"/>
+    <text x="956" y="348" fill="#E8ECF2" font-size="14" font-weight="600">Builder Score</text>
+    <text x="956" y="370" fill="#9AA4B5" font-size="12">Gas Spend ≈ 18% · one of six dims</text>
+
+    <line x1="1070" y1="400" x2="1070" y2="426" stroke="#7C8698" stroke-width="2" marker-end="url(#arr)"/>
+
+    <rect x="942" y="430" width="256" height="70" rx="10" fill="#141920" stroke="#2E3644"/>
+    <text x="956" y="456" fill="#E8ECF2" font-size="14" font-weight="600">RON rewards</text>
+    <text x="956" y="478" fill="#9AA4B5" font-size="12">paid each epoch per score</text>
+
+    <line x1="1070" y1="508" x2="1070" y2="534" stroke="#7C8698" stroke-width="2" marker-end="url(#arr)"/>
+
+    <rect x="942" y="538" width="256" height="50" rx="10" fill="#141920" stroke="#FFD97A" stroke-opacity="0.5"/>
+    <text x="1070" y="561" text-anchor="middle" fill="#FFD97A" font-size="14" font-weight="600">→ your treasury wallet</text>
+    <text x="1070" y="579" text-anchor="middle" fill="#9AA4B5" font-size="11">set on the portal at registration</text>
+  </g>
+
+  <!-- rebate loop arrow back to users -->
+  <path d="M 640 616 L 640 662 L 210 662 L 210 476" fill="none" stroke="#4A5568" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arr)"/>
+  <text x="425" y="652" text-anchor="middle" fill="#7C8698" font-size="12">rebate RON flows back → users stay active (more gas)</text>
+
+  <rect x="60" y="700" width="1160" height="56" rx="14" fill="#141920" stroke="#2E3644"/>
+  <text x="640" y="724" text-anchor="middle" fill="#FFD97A" font-size="14" font-weight="600">Deploy → Add contract on portal → Verify (deployer) → Activate on-chain → watch the Gas column climb</text>
+  <text x="640" y="745" text-anchor="middle" fill="#8A94A6" font-size="12">mainnet chainId 2020 · registry 0xe680632ffb8a15198be30077abbc119ca321dbd3 · docs.roninchain.com/proof-of-distribution</text>
+</svg>
