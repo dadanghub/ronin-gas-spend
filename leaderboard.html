@@ -130,13 +130,14 @@
     <h3>Claim rebates</h3>
     <div class="row" style="margin-bottom:12px">
       <button id="connectBtn">Connect wallet</button>
+      <button id="disconnectBtn" class="ghost" style="display:none">Disconnect</button>
       <button id="claimBtn" class="ghost" disabled>Claim my rebate</button>
       <span class="wvinfo" id="walletInfo"><span class="wvdot"></span>Not connected</span>
     </div>
     <div class="myline" id="claimline"></div>
     <div class="err" id="claimErr"></div>
     <div class="ok" id="claimOk"></div>
-    <div class="hint">Rebates accrue from the contract's rebate pool (funded by the owner): <b>claimable = gas spent × rebate rate</b>. Connect with the Ronin Wallet that transacted with the contract, then click <b>Claim my rebate</b>. Claiming is a normal on-chain tx (costs a little gas).</div>
+    <div class="hint">Rebates accrue from the contract's rebate pool (funded by the owner): <b>claimable = gas spent × rebate rate</b>. Connect with the Ronin Wallet that transacted with the contract, then click <b>Claim my rebate</b>. Claiming is a normal on-chain tx (costs a little gas).<br><b>Switching wallets:</b> click <b>Switch wallet</b> to re-open the account picker, or change the active account in the Ronin Wallet extension — this page updates automatically.</div>
   </div>
 
   <div class="card">
@@ -972,14 +973,22 @@ async function connectWallet(){
     claimErrMsg("No wallet found. Install the <b>Ronin Wallet</b> extension (or enable it), then open this page via <b>http://localhost:8000</b> — wallets don't inject into file:// pages.");
     return;
   }
+  const bp = new ethers.BrowserProvider(prov, 'any');
+  const prev = walletAddr;
   try{
-    const bp = new ethers.BrowserProvider(prov, 'any');
-    await bp.send('eth_requestAccounts', []);
+    if (walletAddr){
+      // already connected: try to force the wallet to re-show the account picker
+      try { await bp.send('wallet_requestPermissions', [{ eth_accounts: {} }]); }
+      catch(e){ await bp.send('eth_requestAccounts', []); }
+    } else {
+      await bp.send('eth_requestAccounts', []);
+    }
     signer = await bp.getSigner();
     walletAddr = await signer.getAddress();
     $('walletInfo').innerHTML = `<span class="wvdot on"></span>${short(walletAddr)}`;
     $('walletInfo').title = walletAddr;
     $('connectBtn').textContent = 'Switch wallet';
+    $('disconnectBtn').style.display = 'inline-block';
     hideClaimMsg();
     // autofill lookup + remember
     myAddr = walletAddr; localStorage.setItem('gasspend.my', walletAddr); $('myaddr').value = walletAddr;
@@ -988,19 +997,57 @@ async function connectWallet(){
     await refreshClaimable();
     if (contract) await lookup();
     updateGasEst();
-    // chain sanity check
+    // chain sanity check (Saigon = 2021, anything else treated as mainnet 2020)
     try{
       const net = await bp.getNetwork(); const chain = Number(net.chainId);
-      const wantMain = $('rpcSel').value.includes('api.roninchain.com');
-      const want = wantMain ? 2020 : 2021;
+      const want = $('rpcSel').value.includes('saigon') ? 2021 : 2020;
       if (chain !== want){
         $('claimline').innerHTML += `<span class="kv">⚠ Wallet is on chain <b>${chain}</b> but this page reads chain <b>${want}</b> — switch networks in Ronin Wallet.</span>`;
       }
     }catch(e){}
+    if (prev && prev.toLowerCase() === walletAddr.toLowerCase()){
+      $('claimline').innerHTML += `<span class="kv">ℹ Same account — to switch, pick another account in the wallet, or remove this site from <b>Ronin Wallet → Settings → Connected sites</b> and reconnect.</span>`;
+    }
   }catch(e){
     claimErrMsg('Connection failed: ' + (e.reason || e.shortMessage || e.message || e));
   }
 }
+
+function disconnectWallet(){
+  signer = null; walletAddr = null;
+  $('walletInfo').innerHTML = `<span class="wvdot"></span>Not connected`;
+  $('connectBtn').textContent = 'Connect wallet';
+  $('disconnectBtn').style.display = 'none';
+  $('claimBtn').disabled = true;
+  $('claimline').innerHTML = '';
+  hideClaimMsg();
+}
+$('disconnectBtn').onclick = disconnectWallet;
+
+// live-update when the active account/network changes inside the wallet
+function watchWallet(){
+  const prov = roninProvider();
+  if (!prov || !prov.on) return;
+  try{
+    prov.on('accountsChanged', async (accs) => {
+      const next = accs && accs[0];
+      if (!next){ disconnectWallet(); return; }
+      if (walletAddr && next.toLowerCase() === walletAddr.toLowerCase()) return;
+      walletAddr = next;
+      try { const bp = new ethers.BrowserProvider(prov, 'any'); signer = await bp.getSigner(); } catch(e){}
+      $('walletInfo').innerHTML = `<span class="wvdot on"></span>${short(walletAddr)}`;
+      $('walletInfo').title = walletAddr;
+      $('connectBtn').textContent = 'Switch wallet';
+      $('disconnectBtn').style.display = 'inline-block';
+      myAddr = walletAddr; localStorage.setItem('gasspend.my', walletAddr); $('myaddr').value = walletAddr;
+      hideClaimMsg();
+      await refreshClaimable();
+      if (contract) await lookup();
+    });
+    prov.on('chainChanged', () => { if (contract) setTimeout(() => loadAll(), 500); });
+  }catch(e){}
+}
+watchWallet();
 
 async function refreshClaimable(){
   $('claimline').innerHTML = '<span class="kv">Checking claimable…</span>';
