@@ -52,6 +52,9 @@
   .foot{color:var(--mut);font-size:12px;margin-top:26px;line-height:1.7;text-align:center}
   .foot a{color:var(--accent)}
   .demo{display:none;background:#3a2f08;border:1px solid #8a6d1a;color:var(--gold);font-size:12.5px;border-radius:10px;padding:10px 14px;margin-top:12px}
+  .mini{display:inline-block;margin:8px 8px 2px 0;padding:7px 12px;border:1px solid var(--gold);color:var(--gold);background:transparent;border-radius:8px;font-size:13px;cursor:pointer}
+  .mini:hover{background:var(--gold);color:#111}
+  #toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:#111;color:#fff;border:1px solid var(--gold);border-radius:20px;padding:9px 18px;font-size:13px;opacity:0;transition:opacity .3s;z-index:99;pointer-events:none;max-width:90vw}
   .demo b{font-weight:800}
   #myaddr{width:100%;font-family:ui-monospace,monospace;font-size:13px}
   .myline{display:flex;gap:10px;align-items:center;flex-wrap:wrap;color:var(--mut);font-size:13px}
@@ -136,9 +139,11 @@
     </div>
     <div class="myline" id="claimline"></div>
     <div class="hint" id="accInfo" style="display:none;background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:10px"></div>
+    <div class="hint" id="listenInfo" style="display:none;background:var(--card2);border:1px solid var(--gold);border-radius:10px;padding:10px 12px;margin-top:8px;color:var(--gold)"></div>
+    <div id="toast"></div>
     <div class="err" id="claimErr"></div>
     <div class="ok" id="claimOk"></div>
-    <div class="hint">Rebates accrue from the contract's rebate pool (funded by the owner): <b>claimable = gas spent × rebate rate</b>. Connect with the Ronin Wallet that transacted with the contract, then click <b>Claim my rebate</b>. Claiming is a normal on-chain tx (costs a little gas).<br><b>Switching wallets:</b> click <b>Switch wallet</b> to re-open the account picker, or change the active account in the Ronin Wallet extension — this page updates automatically.</div>
+    <div class="hint">Rebates accrue from the contract's rebate pool (funded by the owner): <b>claimable = gas spent × rebate rate</b>. Connect with the Ronin Wallet that transacted with the contract, then click <b>Claim my rebate</b>. Claiming is a normal on-chain tx (costs a little gas).<br><b>Switching wallets:</b> click <b>Switch wallet</b> to re-open the account picker, or switch the active account inside the wallet (extension icon / app account tab) — this page follows automatically within ~2s.</div>
   </div>
 
   <div class="card">
@@ -968,34 +973,148 @@ function hideClaimMsg(){ $('claimErr').style.display = 'none'; $('claimOk').styl
 
 $('connectBtn').onclick = connectWallet;
 
+// ---------- wallet detection & switching ----------
+let toastTimer = null;
+function toast(m){
+  const t = $('toast');
+  if (!t) return;
+  t.innerHTML = m; t.style.opacity = '1';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.style.opacity = '0'; }, 4000);
+}
+function walletBrand(){
+  try{
+    if (window.ronin && window.ronin.provider && window.ronin.provider.request){
+      return { id:'ronin', name:'Ronin Wallet' };
+    }
+    if (window.ethereum && window.ethereum.request){
+      const e = window.ethereum;
+      if (e.isRonin) return { id:'ronin', name:'Ronin Wallet' };
+      if (e.isMetaMask) return { id:'metamask', name:'MetaMask' };
+      if (e.isTrust) return { id:'trust', name:'Trust Wallet' };
+      return { id:'other', name:'your wallet' };
+    }
+  }catch(e){}
+  return null;
+}
+function switchSteps(brand){
+  const id = brand ? brand.id : 'other';
+  if (id === 'ronin'){
+    return `Open <b>Ronin Wallet</b> itself &mdash; click the <b>Ronin icon</b> in the browser toolbar (or the app's account tab) and tap the account you want. This page follows automatically within ~2s. Want the picker to appear here instead? <b>Ronin Wallet &rarr; Settings &rarr; Connected sites</b> &rarr; remove this site &rarr; click <b>Connect wallet</b> again.`;
+  }
+  if (id === 'metamask'){
+    return `Click the <b>MetaMask fox icon</b> in the toolbar &rarr; choose the account. This page follows automatically. To force a picker: MetaMask &rarr; Settings &rarr; Connected sites &rarr; remove this site &rarr; reconnect.`;
+  }
+  return `Open <b>${brand ? brand.name : 'your wallet'}</b> and switch the active account there &mdash; this page follows automatically. Or remove this site from the wallet's connected-sites list and reconnect to see the account picker.`;
+}
+async function otherAccounts(prov){
+  try{
+    const accs = await prov.request({ method: 'eth_accounts' });
+    return (accs || []).filter(a => a && a.toLowerCase() !== ((walletAddr||'').toLowerCase()));
+  }catch(e){ return []; }
+}
+let listenTimer = null, listenTimeout = null;
+function stopListening(){
+  if (listenTimer){ clearInterval(listenTimer); listenTimer = null; }
+  if (listenTimeout){ clearTimeout(listenTimeout); listenTimeout = null; }
+  $('listenInfo').style.display = 'none';
+}
+function startListening(seconds){
+  stopListening();
+  const t0 = Date.now();
+  $('listenInfo').style.display = 'block';
+  const paint = () => {
+    const left = Math.max(0, Math.ceil((seconds*1000 - (Date.now()-t0))/1000));
+    $('listenInfo').innerHTML = `&#128066; Listening for an account change in your wallet&hellip; <b>${left}s</b> &nbsp;<a href="#" onclick="stopListening();return false" style="color:var(--gold)">stop</a>`;
+  };
+  paint();
+  listenTimer = setInterval(async () => {
+    const p = roninProvider();
+    if (p && p.request){
+      try{
+        const accs = await p.request({ method: 'eth_accounts' });
+        if (accs && !accs.length){ stopListening(); disconnectWallet(); return; }
+        if (accs && accs.length && (!walletAddr || accs[0].toLowerCase() !== walletAddr.toLowerCase())){
+          stopListening(); $('accInfo').style.display = 'none';
+          await applyAccount(accs);
+          toast('Switched to ' + short(accs[0]) + ' \u2705');
+          return;
+        }
+      }catch(e){}
+    }
+    if (Date.now() - t0 >= seconds*1000){
+      stopListening();
+      toast('No account change detected &mdash; follow the steps above to switch.');
+      return;
+    }
+    paint();
+  }, 1000);
+  listenTimeout = setTimeout(stopListening, seconds*1000);
+}
+async function switchAccount(){
+  const prov = roninProvider();
+  if (!prov) return;
+  const brand = walletBrand();
+  const bname = brand ? brand.name : 'the wallet';
+  // 1) try to revoke the site permission so the next request re-shows the picker (MetaMask supports this; others ignore it)
+  let revoked = false;
+  try{ await prov.request({ method: 'wallet_revokePermissions', params: [{ eth_accounts: {} }] }); revoked = true; }catch(e){}
+  // 2) ask again &mdash; with a fresh permission this usually opens the account picker
+  try{
+    if (revoked){
+      await prov.request({ method: 'eth_requestAccounts' });
+    } else {
+      try{ await prov.request({ method: 'wallet_requestPermissions', params: [{ eth_accounts: {} }] }); }catch(e){}
+      try{ await prov.request({ method: 'eth_requestAccounts' }); }catch(e){}
+    }
+  }catch(e){}
+  // 3) did the account actually change?
+  try{
+    const accs = await prov.request({ method: 'eth_accounts' });
+    if (accs && accs.length && (!walletAddr || accs[0].toLowerCase() !== walletAddr.toLowerCase())){
+      await applyAccount(accs);
+      toast('Switched to ' + short(accs[0]) + ' \u2705');
+      return;
+    }
+  }catch(e){}
+  // 4) same account &mdash; explain (no picker for authorized sites) + offer live watching
+  const others = await otherAccounts(prov);
+  $('accInfo').style.display = 'block';
+  let html = `<b>${bname} won't show a picker again &mdash; this site is already authorized</b> (wallets block that on purpose). Switch the active account inside the wallet instead:`;
+  html += `<br>${switchSteps(brand)}`;
+  if (others.length){
+    html += `<br>Other accounts it exposes right now: ${others.map(a => `<b title="${a}">${short(a)}</b>`).join(', ')}.`;
+  }
+  html += `<br><button class="mini" onclick="listenNow()">&#128066; Watch for my switch (60s)</button> <button class="mini" onclick="forceReset()">Reconnect</button>`;
+  $('accInfo').innerHTML = html;
+}
+async function listenNow(){
+  startListening(60);
+}
+async function forceReset(){
+  const prov = roninProvider();
+  if (!prov) return;
+  $('accInfo').innerHTML = 'Re-requesting the account picker&hellip; If nothing appears, remove this site from the wallet (Settings &rarr; Connected sites) and click Connect wallet again.';
+  try{ await prov.request({ method: 'eth_requestAccounts' }); }catch(e){}
+  try{
+    const accs = await prov.request({ method: 'eth_accounts' });
+    if (accs && accs.length && (!walletAddr || accs[0].toLowerCase() !== walletAddr.toLowerCase())){
+      $('accInfo').style.display = 'none';
+      await applyAccount(accs);
+      toast('Switched to ' + short(accs[0]) + ' \u2705');
+    }
+  }catch(e){}
+}
 async function connectWallet(){
   const prov = roninProvider();
   if (!prov){
-    claimErrMsg("No wallet found. Install the <b>Ronin Wallet</b> extension (or enable it), then open this page via <b>http://localhost:8000</b> — wallets don't inject into file:// pages.");
+    claimErrMsg("No wallet found. Install the <b>Ronin Wallet</b> extension (or enable it), then open this page via <b>http://localhost:8000</b> &mdash; wallets don't inject into file:// pages.");
     return;
   }
   const bp = new ethers.BrowserProvider(prov, 'any');
-  const prev = walletAddr;
+  if (walletAddr){ await switchAccount(); return; }
   try{
-    if (walletAddr){
-      // Already connected. Most wallets won't re-show a picker for an authorized
-      // site, so try both standard prompts, then surface other connected accounts.
-      try { await bp.send('wallet_requestPermissions', [{ eth_accounts: {} }]); } catch(e){}
-      try { await bp.send('eth_requestAccounts', []); } catch(e){}
-      // If the wallet still reports the same account, tell the user what to do
-      try {
-        const accs = await prov.request({ method: 'eth_accounts' });
-        const others = (accs || []).filter(a => a && a.toLowerCase() !== walletAddr.toLowerCase());
-        $('accInfo').style.display = 'block';
-        if (others.length){
-          $('accInfo').innerHTML = `Other connected accounts: ${others.map(a => `<b title="${a}">${short(a)}</b>`).join(', ')}.<br>Select the one you want inside the <b>Ronin Wallet</b> — this page auto-updates.`;
-        } else {
-          $('accInfo').innerHTML = `The wallet returned the same account (authorized sites don't show a picker). Easiest fix: open <b>Ronin Wallet → Settings → Connected sites</b>, remove this site, then click <b>Connect wallet</b> again — the account picker will appear. Or just switch the active account inside the wallet — the page follows automatically.`;
-        }
-      } catch(e2){}
-    } else {
-      await bp.send('eth_requestAccounts', []);
-    }
+    await bp.send('eth_requestAccounts', []);
     signer = await bp.getSigner();
     walletAddr = await signer.getAddress();
     $('walletInfo').innerHTML = `<span class="wvdot on"></span>${short(walletAddr)}`;
@@ -1003,19 +1122,16 @@ async function connectWallet(){
     $('connectBtn').textContent = 'Switch wallet';
     $('disconnectBtn').style.display = 'inline-block';
     hideClaimMsg();
-    // autofill lookup + remember
     myAddr = walletAddr; localStorage.setItem('gasspend.my', walletAddr); $('myaddr').value = walletAddr;
-    // make sure we have a contract
     if (!contract && cfg.addr){ await connect(); initContract(cfg.addr); await loadAll(); }
     await refreshClaimable();
     if (contract) await lookup();
     updateGasEst();
-    // chain sanity check (Saigon = 2021, anything else treated as mainnet 2020)
     try{
       const net = await bp.getNetwork(); const chain = Number(net.chainId);
       const want = $('rpcSel').value.includes('saigon') ? 2021 : 2020;
       if (chain !== want){
-        $('claimline').innerHTML += `<span class="kv">⚠ Wallet is on chain <b>${chain}</b> but this page reads chain <b>${want}</b> — switch networks in Ronin Wallet.</span>`;
+        $('claimline').innerHTML += `<span class="kv">&#9888; Wallet is on chain <b>${chain}</b> but this page reads chain <b>${want}</b> &mdash; switch networks in Ronin Wallet.</span>`;
       }
     }catch(e){}
   }catch(e){
@@ -1058,7 +1174,7 @@ function watchWallet(){
       prov.on('chainChanged', () => { if (contract) setTimeout(() => loadAll(), 500); });
     }catch(e){}
   }
-  // Poll eth_accounts every 3s — catches wallets that don't emit events
+  // Poll eth_accounts every 2s &mdash; catches wallets that don't emit events
   setInterval(async () => {
     const p = roninProvider();
     if (!p || !p.request) return;
@@ -1068,9 +1184,43 @@ function watchWallet(){
       if (!walletAddr){ applyAccount(accs); return; }
       if (accs[0].toLowerCase() !== walletAddr.toLowerCase()) applyAccount(accs);
     }catch(e){}
-  }, 3000);
+  }, 2000);
 }
 watchWallet();
+
+// Wait for a tx with a hard timeout so buttons never hang forever.
+async function waitTx(tx, timeoutHtml, onDone){
+  const p = (provider && provider.getTransactionReceipt) ? provider : tx.provider;
+  const t0 = Date.now();
+  while (Date.now() - t0 < 90000){
+    try{
+      const rc = await p.getTransactionReceipt(tx.hash);
+      if (rc){
+        if (rc.status === 1) return rc;
+        const e = new Error('Transaction reverted on-chain'); e.code = 'REVERTED'; throw e;
+      }
+    }catch(e){
+      if (e.code === 'REVERTED') throw e;
+    }
+    await new Promise(r => setTimeout(r, 3000));
+  }
+  // timed out &mdash; show explorer link, keep watching in the background
+  if (timeoutHtml){ try{ timeoutHtml(tx.hash); }catch(e){} }
+  (async () => {
+    while (true){
+      await new Promise(r => setTimeout(r, 6000));
+      try{
+        const rc = await p.getTransactionReceipt(tx.hash);
+        if (rc){
+          if (onDone){ try{ onDone(rc); }catch(e){} }
+          return;
+        }
+      }catch(e){}
+    }
+  })();
+  return null;
+}
+
 
 async function refreshClaimable(){
   $('claimline').innerHTML = '<span class="kv">Checking claimable…</span>';
@@ -1098,11 +1248,27 @@ $('claimBtn').onclick = async () => {
     const c = contract.connect(signer);
     const tx = await c.claimRebate();
     $('claimline').innerHTML = `<span class="kv">Tx sent: <b>${short(tx.hash)}</b> — waiting for confirmation…</span>`;
-    const rc = await tx.wait();
-    showClaimOk(`Rebate claimed ✅ &nbsp;Tx: <a href="https://explorer.roninchain.com/tx/${tx.hash}" target="_blank">${tx.hash}</a>`);
-    await refreshClaimable();
-    if (myAddr.toLowerCase() === walletAddr.toLowerCase()) await lookup();
-    await loadAll();
+    const rc = await waitTx(tx,
+      h => { $('claimline').innerHTML = `Tx submitted but confirmation is slow — it should confirm shortly. <a href="https://explorer.roninchain.com/tx/${h}" target="_blank">${h}</a>`; },
+      r => {
+        if (r && r.status === 1){
+          showClaimOk(`Rebate claimed ✅ &nbsp;Tx: <a href="https://explorer.roninchain.com/tx/${tx.hash}" target="_blank">${tx.hash}</a>`);
+        } else {
+          claimErrMsg(`Claim reverted on-chain: <a href="https://explorer.roninchain.com/tx/${tx.hash}" target="_blank">${tx.hash}</a>`);
+        }
+        $('claimBtn').textContent = 'Claim my rebate';
+        refreshClaimable(); if (contract) loadAll();
+      }
+    );
+    if (rc){
+      showClaimOk(`Rebate claimed ✅ &nbsp;Tx: <a href="https://explorer.roninchain.com/tx/${tx.hash}" target="_blank">${tx.hash}</a>`);
+      await refreshClaimable();
+      if (myAddr.toLowerCase() === walletAddr.toLowerCase()) await lookup();
+      await loadAll();
+    } else {
+      $('claimBtn').textContent = 'Awaiting confirmation…';
+      return;
+    }
   }catch(e){
     claimErrMsg('Claim failed: ' + (e.reason || e.shortMessage || e.message || e));
   }
@@ -1146,21 +1312,32 @@ async function spendGas(heavy){
   const btn = heavy ? $('heavyBtn') : $('logBtn');
   const orig = btn.textContent;
   btn.disabled = true; btn.textContent = heavy ? 'Burning…' : 'Sending…';
+  let tx;
+  const showDone = rc => {
+    $('spendOk').innerHTML = (rc && rc.status === 1)
+      ? `Done ✅ &nbsp;Tx: <a href="https://explorer.roninchain.com/tx/${tx.hash}" target="_blank">${tx.hash}</a><br>Gas used: <b>${fmt(rc.gasUsed)}</b>${heavy ? ' · heavy records written' : ''}`
+      : `Reverted on-chain: <a href="https://explorer.roninchain.com/tx/${tx.hash}" target="_blank">${tx.hash}</a>`;
+    $('spendOk').style.display = 'block';
+    if (myAddr.toLowerCase() === walletAddr.toLowerCase()) lookup().catch(()=>{});
+    loadAll();
+  };
   try{
     const c = contract.connect(signer);
-    const tx = heavy
+    tx = heavy
       ? await c.logActivityHeavy(ctx, BigInt($('slotsSel').value))
       : await c.logActivity(ctx);
     $('spendOk').innerHTML = `Tx sent: <b>${short(tx.hash)}</b> — waiting for confirmation…`;
     $('spendOk').style.display = 'block';
-    const rc = await tx.wait();
-    $('spendOk').innerHTML = `Done ✅ &nbsp;Tx: <a href="https://explorer.roninchain.com/tx/${tx.hash}" target="_blank">${tx.hash}</a><br>Gas used: <b>${fmt(rc.gasUsed)}</b>${heavy ? ' · heavy records written' : ''}`;
-    if (myAddr.toLowerCase() === walletAddr.toLowerCase()) await lookup();
-    await loadAll();
+    const rc = await waitTx(tx,
+      h => { $('spendOk').innerHTML = `Tx submitted but confirmation is slow — it should confirm shortly. <a href="https://explorer.roninchain.com/tx/${h}" target="_blank">${h}</a>`; },
+      showDone
+    );
+    if (rc) showDone(rc);
+    btn.disabled = false; btn.textContent = orig;
   }catch(e){
     spendErr('Tx failed: ' + (e.reason || e.shortMessage || e.message || e));
+    btn.disabled = false; btn.textContent = orig;
   }
-  btn.disabled = false; btn.textContent = orig;
 }
 $('logBtn').onclick = () => spendGas(false);
 $('heavyBtn').onclick = () => spendGas(true);
