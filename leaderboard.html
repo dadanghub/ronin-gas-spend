@@ -72,7 +72,7 @@
 <div class="topbar"></div>
 <div class="wrap">
   <h1>GasSpend <span>Leaderboard</span> — Ronin PoD Season 3</h1>
-  <div class="sub">Live on-chain leaderboard for the GasSpend contract. Reads real <code>Activity</code> events and contract state directly from Ronin RPC (no backend). Gas spend shown in gas units and estimated RON at the current gas price — this is the metric PoD scores under <b>Gas Spend</b>.<br><b>Live contract:</b> <a href="https://explorer.roninchain.com/address/0xB15128CB923aA016B6404a5f9f81B9979373113E" target="_blank">0xB15128CB923aA016B6404a5f9f81B9979373113E</a> (mainnet) — loaded automatically.</div>
+  <div class="sub">Live on-chain leaderboard for the GasSpend contract. Reads real <code>Activity</code> events and contract state directly from Ronin RPC (no backend). Gas spend shown in gas units and estimated RON at the current gas price — this is the metric PoD scores under <b>Gas Spend</b>. Data comes straight from the contract’s on-chain user registry (full season, no scanning).<br><b>Live contract:</b> <a href="https://explorer.roninchain.com/address/0xB15128CB923aA016B6404a5f9f81B9979373113E" target="_blank">0xB15128CB923aA016B6404a5f9f81B9979373113E</a> (mainnet) — loaded automatically.</div>
 
   <div class="card">
     <h3>Contract</h3>
@@ -82,6 +82,7 @@
       <button id="demoBtn" class="ghost">Show demo data</button>
       <select id="rpcSel">
         <option value="https://api.roninchain.com/rpc">Ronin mainnet</option>
+        <option value="https://ronin.drpc.org">Ronin mainnet (drpc mirror)</option>
         <option value="https://saigon-testnet.roninchain.com/rpc">Saigon testnet</option>
       </select>
     </div>
@@ -904,9 +905,32 @@ if (cfg.addr) { $('addrIn').value = cfg.addr; connect().then(loadAll); }
 else if (DEFAULT_CONTRACT) { $('addrIn').value = DEFAULT_CONTRACT; connect().then(loadAll); }
 $('myaddr').value = myAddr;
 
+// Ronin public RPC rate-limits hard: serialize every request (~300ms apart) + retry on "Too many requests".
+function throttleProvider(base){
+  const orig = base.send.bind(base);
+  let queue = Promise.resolve(), last = 0;
+  base.send = async (method, params) => {
+    const run = queue.then(async () => {
+      const wait = Math.max(0, 300 - (Date.now() - last));
+      if (wait > 0) await new Promise(r => setTimeout(r, wait));
+      for (let attempt = 0; ; attempt++){
+        try { const res = await orig(method, params); last = Date.now(); return res; }
+        catch(e){
+          const msg = String((e && (e.shortMessage || e.message)) || e).toLowerCase();
+          const limited = msg.includes('too many requests') || msg.includes('rate limit') || msg.includes('429');
+          if (limited && attempt < 4){ await new Promise(r => setTimeout(r, 600 * (attempt + 1))); continue; }
+          throw e;
+        }
+      }
+    });
+    queue = run.catch(() => {});
+    return run;
+  };
+  return base;
+}
 async function connect(){
   const rpc = $('rpcSel').value; cfg.rpc = rpc; saveCfg();
-  provider = new ethers.JsonRpcProvider(rpc);
+  provider = throttleProvider(new ethers.JsonRpcProvider(rpc));
   return provider;
 }
 function initContract(addr){
@@ -922,7 +946,7 @@ $('loadBtn').onclick = async () => {
   await connect(); initContract(a);
   await loadAll();
 };
-$('rpcSel').onchange = async () => { if (cfg.addr) { await connect(); initContract(cfg.addr); await loadAll(); } };
+$('rpcSel').onchange = async () => { const a = cfg.addr || DEFAULT_CONTRACT; if (a) { await connect(); initContract(a); await loadAll(); } };
 $('lookupBtn').onclick = lookup;
 $('demoBtn').onclick = showDemo;
 
@@ -1080,96 +1104,104 @@ async function loadAll(){
   try{
     await Promise.all([loadStats(), loadBoard()]);
     updateGasEst();
-  }catch(e){ err('Load failed: ' + e.message); console.error(e); }
+  }catch(e){
+    // RPC was busy — wait and retry once
+    try{
+      await new Promise(r => setTimeout(r, 1200));
+      await Promise.all([loadStats(), loadBoard()]);
+      updateGasEst();
+    }catch(e2){ err('Load failed (RPC busy) — ' + (e2.message || e2)); console.error(e2); }
+  }
 }
 
 async function loadStats(){
   const s = $('stats');
   s.innerHTML = `<div class="stat"><div class="v"><span class="spin"></span></div><div class="l">loading</div></div>`;
-  const [stats, pool, rate, price, owner, treasury] = await Promise.all([
-    contract.stats(), contract.poolBalance(), contract.rebatePerGas(),
-    provider.getFeeData(), contract.owner(), contract.treasury()
-  ]);
-  const gasPrice = price.gasPrice ? Number(price.gasPrice) : 21e9;
-  const ronVal = Number(stats[2]) * gasPrice / 1e18;
-  const rateRon = Number(rate) / 1e18;
-  const pct = stats[2] > 0n ? (Number(stats[3]) / (Number(stats[2]) * gasPrice / 1e18 + Number(stats[3])) * 100).toFixed(1) : 0;
+  // sequential + per-call fallback: one slow/failed stat must not blank the whole card
+  let stats = null, pool = null, rate = null, price = null;
+  try { stats = await contract.stats(); } catch(e){}
+  try { pool = await contract.poolBalance(); } catch(e){}
+  try { rate = await contract.rebatePerGas(); } catch(e){}
+  try { price = await provider.getFeeData(); } catch(e){}
+  const gasPrice = price && price.gasPrice ? Number(price.gasPrice) : 21e9;
+  const ronVal = stats ? Number(stats[2]) * gasPrice / 1e18 : 0;
+  const rateRon = rate ? Number(rate) / 1e18 : 0;
+  const pct = stats && stats[2] > 0n ? (Number(stats[3]) / (Number(stats[2]) * gasPrice / 1e18 + Number(stats[3])) * 100).toFixed(1) : 0;
   s.innerHTML = `
-    <div class="stat"><div class="v usr">${fmt(stats[0])}</div><div class="l">Users</div></div>
-    <div class="stat"><div class="v usr">${fmt(stats[1])}</div><div class="l">Total calls</div></div>
-    <div class="stat"><div class="v gas">${fmt(stats[2])}</div><div class="l">Gas spent (units)</div></div>
-    <div class="stat"><div class="v ron">${ronVal.toFixed(2)} RON</div><div class="l">Est. gas @ ${(gasPrice/1e9).toFixed(0)} gwei</div></div>
-    <div class="stat"><div class="v ron">${ron(pool).toFixed(3)}</div><div class="l">Rebate pool (RON)</div></div>
-    <div class="stat"><div class="v ron">${ron(stats[3]).toFixed(4)}</div><div class="l">Owed to users (RON)</div></div>
-    <div class="stat"><div class="v">${rateRon.toFixed(9)}</div><div class="l">Rebate rate (RON/gas)</div></div>`;
+    <div class="stat"><div class="v usr">${stats ? fmt(stats[0]) : '—'}</div><div class="l">Users</div></div>
+    <div class="stat"><div class="v usr">${stats ? fmt(stats[1]) : '—'}</div><div class="l">Total calls</div></div>
+    <div class="stat"><div class="v gas">${stats ? fmt(stats[2]) : '—'}</div><div class="l">Gas spent (units)</div></div>
+    <div class="stat"><div class="v ron">${ronVal ? ronVal.toFixed(2) : '—'} RON</div><div class="l">Est. gas @ ${(gasPrice/1e9).toFixed(0)} gwei</div></div>
+    <div class="stat"><div class="v ron">${pool ? ron(pool).toFixed(3) : '—'}</div><div class="l">Rebate pool (RON)</div></div>
+    <div class="stat"><div class="v ron">${stats ? ron(stats[3]).toFixed(4) : '—'}</div><div class="l">Owed to users (RON)</div></div>
+    <div class="stat"><div class="v">${rateRon ? rateRon.toFixed(9) : '—'}</div><div class="l">Rebate rate (RON/gas)</div></div>`;
 }
 
 const TOPIC0 = ethers.id('Activity(address,uint256,uint256,uint256,bytes32)');
 
 async function loadBoard(){
-  $('tableWrap').innerHTML = `<div class="empty"><span class="spin"></span> Scanning Activity events…</div>`;
-  const latest = await provider.getBlockNumber();
-  // Ronin public RPC caps eth_getLogs at 200 blocks/request — stay under it.
-  const depth = Math.min(8000, latest);            // scan last ~8k blocks
-  const chunk = 150;
-  const rows = new Map();
-  let scanned = 0;
-  for (let to = latest; to > latest - depth && scanned < 60; scanned++) {
-    const from = Math.max(0, to - chunk + 1);
-    const logs = await provider.getLogs({ address: cfg.addr, topics: [TOPIC0], fromBlock: from, toBlock: to });
-    for (const lg of logs){
-      const parsed = contract.interface.parseLog(lg); if (!parsed) continue;
-      const u = parsed.args.user, gas = parsed.args.gasUsed, ts = parsed.args.timestamp, ctx = parsed.args.context;
-      const r = rows.get(u) || { gas: 0n, calls: 0, lastTs: 0, ctx: '' };
-      r.gas += gas; r.calls++; if (Number(ts) > r.lastTs) { r.lastTs = Number(ts); r.ctx = ethers.isHexString(ctx) ? ctx.slice(0,10) : ctx; }
-      rows.set(u, r);
-    }
-    to = from - 1;
-    if (from <= 0) break;
+  $('tableWrap').innerHTML = `<div class="empty"><span class="spin"></span> Reading on-chain user registry…</div>`;
+  let n = 0, failed = 0;
+  try { n = Number(await contract.userCount()); } catch(e){}
+  if (!n){
+    $('boardTitle').textContent = 'Leaderboard';
+    $('tableWrap').innerHTML = `<div class="empty">No users registered yet.<br>Once users call <b>logActivity()</b> or <b>logActivityHeavy()</b>, they appear here ranked by gas burned.</div>`;
+    return;
   }
-  renderBoard(rows, latest);
+  const rows = new Map();
+  const limit = Math.min(n, 500);   // read at most 500 users per refresh
+  for (let i = 0; i < limit; i++){
+    try {
+      const addr = await contract.userList(i);
+      const u = await contract.users(addr);          // (registered, gasSpent, claimable, lastClaim)
+      rows.set(addr.toLowerCase(), { addr, gas: u[1], claimable: u[2], calls: 0 });
+    } catch(e){ failed++; }
+  }
+  renderBoard(rows, n, failed);
 }
 
-async function renderBoard(rows, latestBlock){
-  const gasPrice = (await provider.getFeeData()).gasPrice ? Number((await provider.getFeeData()).gasPrice) : 21e9;
+async function renderBoard(rows, totalUsers, failed){
+  let gasPrice = 21e9;
+  try { const p = await provider.getFeeData(); if (p && p.gasPrice) gasPrice = Number(p.gasPrice); } catch(e){}
   const sorted = [...rows.entries()].sort((a,b) => Number(b[1].gas - a[1].gas));
   const my = myAddr.toLowerCase();
   const top = sorted.slice(0, 100);
 
-  // enrich top 20 with heavyRecordCount + claimable (sequential eth_calls)
-  for (let i = 0; i < Math.min(20, top.length); i++){
-    const a = top[i][0];
-    try{
-      const [hc, cl] = await Promise.all([contract.heavyRecordCount(a), contract.claimableOf(a)]);
-      top[i][1].heavy = Number(hc); top[i][1].claimable = Number(cl) / 1e18;
-    }catch(e){ top[i][1].heavy = -1; }
-  }
-  const blocksBack = latestBlock - (await provider.getBlockNumber());
-
   if (!sorted.length){
-    $('tableWrap').innerHTML = `<div class="empty">No Activity events found yet.<br>Once users call <b>logActivity()</b> or <b>logActivityHeavy()</b>, they appear here ranked by gas burned.</div>`;
+    $('boardTitle').textContent = 'Leaderboard';
+    $('tableWrap').innerHTML = `<div class="empty">No users registered yet.<br>Once users call <b>logActivity()</b> or <b>logActivityHeavy()</b>, they appear here ranked by gas burned.</div>`;
     return;
   }
   const totalGas = sorted.reduce((s,r) => s + Number(r[1].gas), 0);
-  const tbody = sorted.slice(0, 100).map(([addr, d], i) => {
-    const ronV = Number(d.gas) * gasPrice / 1e18;
-    const pct = totalGas ? (Number(d.gas) / totalGas * 100).toFixed(1) : '0';
-    const isYou = addr.toLowerCase() === my;
-    const heavy = d.heavy === -1 ? `<span class="badge none">n/a</span>` : d.heavy > 0 ? `<span class="badge heavy">${fmt(d.heavy)} heavy records</span>` : '';
-    return `<tr>
-      <td class="rank${i < 3 ? ' top' : ''}">${i + 1}</td>
-      <td class="addr">${short(addr)}${isYou ? '<span class="you">YOU</span>' : ''}</td>
-      <td class="num">${fmt(d.gas)}</td>
-      <td class="num">${ronV.toFixed(4)}</td>
-      <td class="num">${d.calls}${heavy}</td>
-      <td class="ctx" title="${d.ctx}">${d.ctx || '—'}</td>
-      <td class="num" style="color:${isYou ? 'var(--accent)' : 'var(--mut)'}">${pct}%</td>
-    </tr>`;
-  }).join('');
-  $('boardTitle').textContent = `Leaderboard — top ${Math.min(100, sorted.length)} of ${sorted.length} wallets · last ${fmt(blocksBack)} blocks`;
-  $('tableWrap').innerHTML = `<table>
-    <thead><tr><th>#</th><th>Wallet</th><th class="num">Gas spent</th><th class="num">≈ RON</th><th class="num">Calls</th><th>Last ctx</th><th class="num">Share</th></tr></thead>
-    <tbody>${tbody}</tbody></table>`;
+  const paint = () => {
+    const tbody = top.map(([addr, d], i) => {
+      const ronV = Number(d.gas) * gasPrice / 1e18;
+      const pct = totalGas ? (Number(d.gas) / totalGas * 100).toFixed(1) : '0';
+      const isYou = addr.toLowerCase() === my;
+      const heavy = d.heavy === undefined ? '' : d.heavy === -1 ? `<span class="badge none">n/a</span>` : d.heavy > 0 ? `<span class="badge heavy">${fmt(d.heavy)} heavy records</span>` : '';
+      return `<tr>
+        <td class="rank${i < 3 ? ' top' : ''}">${i + 1}</td>
+        <td class="addr">${short(addr)}${isYou ? '<span class="you">YOU</span>' : ''}</td>
+        <td class="num">${fmt(d.gas)}</td>
+        <td class="num">${ronV.toFixed(4)}</td>
+        <td class="num">${d.calls || '—'}${heavy}</td>
+        <td class="num" style="color:${isYou ? 'var(--accent)' : 'var(--mut)'}">${pct}%</td>
+      </tr>`;
+    }).join('');
+    $('boardTitle').textContent = `Leaderboard — top ${Math.min(100, sorted.length)} of ${totalUsers} registered users${failed ? ` · ${failed} read(s) failed (RPC busy)` : ''}`;
+    $('tableWrap').innerHTML = `<table>
+      <thead><tr><th>#</th><th>Wallet</th><th class="num">Gas spent</th><th class="num">≈ RON</th><th>Heavy</th><th class="num">Share</th></tr></thead>
+      <tbody>${tbody}</tbody></table>`;
+  };
+  paint();  // show immediately
+  // enrich top 10 heavy-record badges after paint (throttled reads)
+  (async () => {
+    for (let i = 0; i < Math.min(5, top.length); i++){
+      const addr = top[i][0];
+      try { top[i][1].heavy = Number(await contract.heavyRecordCount(addr)); } catch(e){ top[i][1].heavy = -1; }
+    }
+    paint();
+  })();
 }
 
 async function lookup(){
@@ -1178,6 +1210,7 @@ async function lookup(){
   if (!contract) return err('Load a contract first.');
   hideErr();
   myAddr = a; localStorage.setItem('gasspend.my', a);
+  try{
   const [gas, claim, reg, heavy] = await Promise.all([
     contract.gasSpentOf(a), contract.claimableOf(a), contract.isRegistered(a), contract.heavyRecordCount(a)
   ]);
@@ -1190,6 +1223,7 @@ async function lookup(){
     <span class="kv">Claimable: <b style="color:var(--gold)">${Number(claim)/1e18 >= 0.001 ? (Number(claim)/1e18).toFixed(4) : '<0.001'} RON</b></span>
     <span class="kv">Heavy records: <b>${fmt(heavy)}</b></span>`;
   if (reg) { await loadBoard(); window.scrollTo({top: document.body.scrollHeight * .5, behavior:'smooth'}); }
+  }catch(e){ err('Lookup failed (RPC busy — try again): ' + (e.message || e)); console.error(e); }
 }
 
 function showDemo(){
@@ -1220,7 +1254,13 @@ function fmt(x){
   while (v >= 1000 && u < units.length - 1){ v /= 1000; u++; }
   return (v >= 100 ? v.toFixed(0) : v.toFixed(v >= 10 ? 1 : 2)) + units[u];
 }
-setInterval(() => { if (contract && !document.hidden) loadAll(); }, 30000);
+let _loading = false;
+async function loadAllGuarded(){
+  if (_loading) return;
+  _loading = true;
+  try { await loadAll(); } finally { _loading = false; }
+}
+setInterval(() => { if (contract && !document.hidden) loadAllGuarded(); }, 60000);
 </script>
 </body>
 </html>

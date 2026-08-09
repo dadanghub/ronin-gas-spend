@@ -124,6 +124,7 @@ permanently stuck (contract balance returns to 0 after payouts).
 - Deployer (owner/treasury): `0x44fEe80B984AE99c69a4d108C58075De7DAfBaB5`
 - `rebatePerGas` = 10 gwei/gas · rebate pool seeded with 3 RON
 - The frontend (`leaderboard.html`) **loads this address automatically** — no manual entry needed.
+- Frontend RPC layer: requests are serialized (~300ms) with auto-retry — the Ronin public RPC rejects parallel batches (ethers auto-batching) with `Too many requests`; the page also reads the leaderboard from the contract's on-chain `userList`/`users()` registry (full season, no block-range scanning) instead of event logs.
 
 ### Redeploy (if you want a fresh instance)
 
