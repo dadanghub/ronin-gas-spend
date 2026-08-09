@@ -72,7 +72,7 @@
 <div class="topbar"></div>
 <div class="wrap">
   <h1>GasSpend <span>Leaderboard</span> — Ronin PoD Season 3</h1>
-  <div class="sub">Live on-chain leaderboard for the GasSpend contract. Reads real <code>Activity</code> events and contract state directly from Ronin RPC (no backend). Gas spend shown in gas units and estimated RON at the current gas price — this is the metric PoD scores under <b>Gas Spend</b>.</div>
+  <div class="sub">Live on-chain leaderboard for the GasSpend contract. Reads real <code>Activity</code> events and contract state directly from Ronin RPC (no backend). Gas spend shown in gas units and estimated RON at the current gas price — this is the metric PoD scores under <b>Gas Spend</b>.<br><b>Live contract:</b> <a href="https://explorer.roninchain.com/address/0xB15128CB923aA016B6404a5f9f81B9979373113E" target="_blank">0xB15128CB923aA016B6404a5f9f81B9979373113E</a> (mainnet) — loaded automatically.</div>
 
   <div class="card">
     <h3>Contract</h3>
@@ -890,6 +890,7 @@ const ABI = [
  }
 ];
 const DEFAULT_RPC = 'https://api.roninchain.com/rpc';
+const DEFAULT_CONTRACT = '0xB15128CB923aA016B6404a5f9f81B9979373113E'; // live Ronin mainnet deployment
 const STORAGE_KEY = 'gasspend.cfg';
 let provider = null, contract = null, myAddr = localStorage.getItem('gasspend.my') || '';
 let cfg = loadCfg();
@@ -900,6 +901,7 @@ function saveCfg(){ localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg)) }
 const $ = id => document.getElementById(id);
 $('rpcSel').value = cfg.rpc || DEFAULT_RPC;
 if (cfg.addr) { $('addrIn').value = cfg.addr; connect().then(loadAll); }
+else if (DEFAULT_CONTRACT) { $('addrIn').value = DEFAULT_CONTRACT; connect().then(loadAll); }
 $('myaddr').value = myAddr;
 
 async function connect(){

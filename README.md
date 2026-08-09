@@ -117,6 +117,17 @@ permanently stuck (contract balance returns to 0 after payouts).
 
 ## 3. Deploy to Ronin mainnet
 
+**LIVE DEPLOYMENT (mainnet, chainId 2020):**
+- Contract: `0xB15128CB923aA016B6404a5f9f81B9979373113E`
+- Explorer: https://explorer.roninchain.com/address/0xB15128CB923aA016B6404a5f9f81B9979373113E
+- Deploy tx: `0x29dc5dabc7a09199b57879a44adb0dd637fe0f99ca85b759ad61fc53d878f206`
+- Deployer (owner/treasury): `0x44fEe80B984AE99c69a4d108C58075De7DAfBaB5`
+- `rebatePerGas` = 10 gwei/gas · rebate pool seeded with 3 RON
+- The frontend (`leaderboard.html`) **loads this address automatically** — no manual entry needed.
+
+### Redeploy (if you want a fresh instance)
+
+
 Network: **Ronin** — Chain ID `2020` — RPC `https://api.roninchain.com/rpc`
 (public) — Explorer `https://explorer.roninchain.com`
 Testnet: **Saigon** — Chain ID `2021` — `https://saigon-testnet.roninchain.com/rpc`
