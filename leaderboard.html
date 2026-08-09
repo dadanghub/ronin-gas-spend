@@ -64,6 +64,8 @@
   .ok a{color:var(--accent)}
   button:disabled{opacity:.45;cursor:not-allowed}
   .hint{color:var(--mut);font-size:12px;margin-top:10px;line-height:1.6}
+  .lbl{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.1em;font-weight:700}
+  .est{color:var(--gold);font-size:12.5px;font-variant-numeric:tabular-nums}
 </style>
 </head>
 <body>
@@ -99,6 +101,28 @@
       <button id="lookupBtn" class="ghost">Look up</button>
     </div>
     <div class="myline" id="myline"></div>
+  </div>
+
+  <div class="card">
+    <h3>Spend gas</h3>
+    <div class="row" style="margin-bottom:12px">
+      <input id="ctxIn" placeholder="context (optional — e.g. campaign id)" style="flex:1;min-width:200px;font-family:ui-monospace,monospace;font-size:13px">
+      <button id="logBtn" disabled>Log activity</button>
+      <button id="heavyBtn" class="ghost" disabled>Heavy burn</button>
+    </div>
+    <div class="row">
+      <span class="lbl">Heavy slots</span>
+      <select id="slotsSel">
+        <option value="100">100</option>
+        <option value="500">500</option>
+        <option value="1000" selected>1,000</option>
+        <option value="2000">2,000</option>
+      </select>
+      <span class="est" id="gasEst">—</span>
+    </div>
+    <div class="err" id="spendErr"></div>
+    <div class="ok" id="spendOk"></div>
+    <div class="hint">Calls <b>logActivity(bytes32)</b> or <b>logActivityHeavy(bytes32,uint256)</b> on the contract from your connected wallet. Every call costs real gas paid in RON — that's exactly what PoD scores under <b>Gas Spend</b>. First call auto-registers you. <b>Heavy burn</b> writes thousands of permanent on-chain records: at 2,000 slots ≈ 45M gas ≈ <b>~0.95 RON</b> per call (≈76% of a block). Estimates update live with the current gas price.</div>
   </div>
 
   <div class="card">
@@ -937,6 +961,8 @@ async function connectWallet(){
     if (!contract && cfg.addr){ await connect(); initContract(cfg.addr); await loadAll(); }
     await refreshClaimable();
     if (contract) await lookup();
+    $('logBtn').disabled = false; $('heavyBtn').disabled = false;
+    updateGasEst();
     // chain sanity check
     try{
       const net = await bp.getNetwork(); const chain = Number(net.chainId);
@@ -989,6 +1015,58 @@ $('claimBtn').onclick = async () => {
   if (!contract) $('claimBtn').disabled = true;
 };
 
+// ================= Spend gas (logActivity / logActivityHeavy) =================
+function spendErr(m){ $('spendErr').innerHTML = m; $('spendErr').style.display = 'block'; $('spendOk').style.display = 'none'; }
+function hideSpendMsg(){ $('spendErr').style.display = 'none'; $('spendOk').style.display = 'none'; }
+function ctxValue(){
+  const v = $('ctxIn').value.trim();
+  if (!v) return ethers.keccak256(ethers.toUtf8Bytes('gasspend-' + Date.now()));
+  return ethers.keccak256(ethers.toUtf8Bytes(v));
+}
+// measured on local EVM: ~22.66k gas per heavy slot + ~250k fixed overhead
+const HEAVY_GAS_PER_SLOT = 22660, HEAVY_FIXED = 250000;
+async function updateGasEst(){
+  $('gasEst').textContent = '—';
+  if (!provider) return;
+  try{
+    const price = (await provider.getFeeData()).gasPrice ? Number((await provider.getFeeData()).gasPrice) : 21e9;
+    const slots = Number($('slotsSel').value);
+    const gasUnits = HEAVY_FIXED + slots * HEAVY_GAS_PER_SLOT;
+    const ron = gasUnits * price / 1e18;
+    const blockPct = gasUnits / 6e7 * 100;
+    $('gasEst').textContent = `heavy @ ${slots} slots ≈ ${fmt(gasUnits)} gas ≈ ${ron.toFixed(3)} RON (${blockPct.toFixed(0)}% of block) @ ${(price/1e9).toFixed(0)} gwei`;
+  }catch(e){}
+}
+$('slotsSel').onchange = updateGasEst;
+
+async function spendGas(heavy){
+  if (!signer) return spendErr('Connect your wallet first.');
+  if (!contract) return spendErr('Load the contract address first.');
+  hideSpendMsg();
+  const ctx = ctxValue();
+  const btn = heavy ? $('heavyBtn') : $('logBtn');
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = heavy ? 'Burning…' : 'Sending…';
+  try{
+    const c = contract.connect(signer);
+    const tx = heavy
+      ? await c.logActivityHeavy(ctx, BigInt($('slotsSel').value))
+      : await c.logActivity(ctx);
+    $('spendOk').innerHTML = `Tx sent: <b>${short(tx.hash)}</b> — waiting for confirmation…`;
+    $('spendOk').style.display = 'block';
+    const rc = await tx.wait();
+    $('spendOk').innerHTML = `Done ✅ &nbsp;Tx: <a href="https://explorer.roninchain.com/tx/${tx.hash}" target="_blank">${tx.hash}</a><br>Gas used: <b>${fmt(rc.gasUsed)}</b>${heavy ? ' · heavy records written' : ''}`;
+    if (myAddr.toLowerCase() === walletAddr.toLowerCase()) await lookup();
+    await loadAll();
+  }catch(e){
+    spendErr('Tx failed: ' + (e.reason || e.shortMessage || e.message || e));
+  }
+  btn.disabled = false; btn.textContent = orig;
+}
+$('logBtn').onclick = () => spendGas(false);
+$('heavyBtn').onclick = () => spendGas(true);
+
+
 
 function err(m){ $('err').textContent = m; $('err').style.display = 'block'; }
 function hideErr(){ $('err').style.display = 'none'; }
@@ -996,6 +1074,7 @@ function hideErr(){ $('err').style.display = 'none'; }
 async function loadAll(){
   try{
     await Promise.all([loadStats(), loadBoard()]);
+    updateGasEst();
   }catch(e){ err('Load failed: ' + e.message); console.error(e); }
 }
 
