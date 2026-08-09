@@ -107,8 +107,8 @@
     <h3>Spend gas</h3>
     <div class="row" style="margin-bottom:12px">
       <input id="ctxIn" placeholder="context (optional — e.g. campaign id)" style="flex:1;min-width:200px;font-family:ui-monospace,monospace;font-size:13px">
-      <button id="logBtn" disabled>Log activity</button>
-      <button id="heavyBtn" class="ghost" disabled>Heavy burn</button>
+      <button id="logBtn">Log activity</button>
+      <button id="heavyBtn" class="ghost">Heavy burn</button>
     </div>
     <div class="row">
       <span class="lbl">Heavy slots</span>
@@ -122,7 +122,7 @@
     </div>
     <div class="err" id="spendErr"></div>
     <div class="ok" id="spendOk"></div>
-    <div class="hint">Calls <b>logActivity(bytes32)</b> or <b>logActivityHeavy(bytes32,uint256)</b> on the contract from your connected wallet. Every call costs real gas paid in RON — that's exactly what PoD scores under <b>Gas Spend</b>. First call auto-registers you. <b>Heavy burn</b> writes thousands of permanent on-chain records: at 2,000 slots ≈ 45M gas ≈ <b>~0.95 RON</b> per call (≈76% of a block). Estimates update live with the current gas price.</div>
+    <div class="hint">Calls <b>logActivity(bytes32)</b> or <b>logActivityHeavy(bytes32,uint256)</b> on the contract from your connected wallet. Every call costs real gas paid in RON — that's exactly what PoD scores under <b>Gas Spend</b>. No wallet connected yet? Clicking a button will prompt you to connect. First call auto-registers you. <b>Heavy burn</b> writes thousands of permanent on-chain records: at 2,000 slots ≈ 45M gas ≈ <b>~0.95 RON</b> per call (≈76% of a block). Estimates update live with the current gas price.</div>
   </div>
 
   <div class="card">
@@ -961,7 +961,6 @@ async function connectWallet(){
     if (!contract && cfg.addr){ await connect(); initContract(cfg.addr); await loadAll(); }
     await refreshClaimable();
     if (contract) await lookup();
-    $('logBtn').disabled = false; $('heavyBtn').disabled = false;
     updateGasEst();
     // chain sanity check
     try{
@@ -1040,7 +1039,11 @@ async function updateGasEst(){
 $('slotsSel').onchange = updateGasEst;
 
 async function spendGas(heavy){
-  if (!signer) return spendErr('Connect your wallet first.');
+  if (!signer){
+    spendErr('No wallet connected — opening wallet connection…');
+    try{ await connectWallet(); }catch(e){}
+  }
+  if (!signer) return spendErr('Connect your wallet first (click Connect wallet above).');
   if (!contract) return spendErr('Load the contract address first.');
   hideSpendMsg();
   const ctx = ctxValue();
